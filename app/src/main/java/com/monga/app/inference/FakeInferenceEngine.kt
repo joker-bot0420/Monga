@@ -44,7 +44,11 @@ class FakeInferenceEngine : InferenceEngine {
                 delay(20)
             }
 
-            emit(InferenceEvent.Completed)
+            if (cancelled.get()) {
+                emit(InferenceEvent.Cancelled)
+            } else {
+                emit(InferenceEvent.Completed)
+            }
         } finally {
             if (_state.value != InferenceState.NoModel) {
                 _state.value = InferenceState.Ready

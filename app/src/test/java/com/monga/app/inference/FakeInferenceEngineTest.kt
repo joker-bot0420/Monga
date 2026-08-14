@@ -59,6 +59,7 @@ class FakeInferenceEngineTest {
         assertTrue(events.single() is InferenceEvent.Failed)
         assertEquals(InferenceState.NoModel, engine.state.value)
     }
+
     @Test
     fun unloadDuringGenerationKeepsNoModelState() = runBlocking {
         val engine = FakeInferenceEngine()
@@ -77,5 +78,31 @@ class FakeInferenceEngineTest {
         assertEquals(InferenceEvent.Cancelled, events.last())
         assertEquals(InferenceState.NoModel, engine.state.value)
     }
-}
 
+    @Test
+    fun cancelAfterLastTokenEmitsCancelled() = runBlocking {
+        val engine = FakeInferenceEngine()
+        engine.loadModel("fake.gguf")
+
+        val response = "안녕! 지금은 테스트 엔진으로 대화하고 있어."
+        val expectedChunkCount = response.chunked(3).size
+
+        val events = mutableListOf<InferenceEvent>()
+        var tokenCount = 0
+
+        engine.generate("안녕").collect { event ->
+            events += event
+
+            if (event is InferenceEvent.Token) {
+                tokenCount++
+
+                if (tokenCount == expectedChunkCount) {
+                    engine.cancel()
+                }
+            }
+        }
+
+        assertEquals(InferenceEvent.Cancelled, events.last())
+        assertEquals(InferenceState.Ready, engine.state.value)
+    }
+}
