@@ -1,5 +1,6 @@
 package com.monga.app.data.backup
 
+import org.json.JSONException
 import com.monga.app.data.local.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -19,16 +20,24 @@ object BackupJsonCodec {
     }.toString(2)
 
     fun decode(json: String): DatabaseSnapshot {
-        val root = JSONObject(json)
-        require(root.getString("format") == "monga-backup") { "Monga 백업 파일이 아닙니다." }
-        require(root.getInt("version") == VERSION) { "지원하지 않는 백업 버전입니다." }
-        return DatabaseSnapshot(
-            root.getJSONArray("conversations").mapObjects { Conversation(it.long("id"), it.string("title"), it.long("createdAt"), it.long("updatedAt")) },
-            root.getJSONArray("messages").mapObjects { Message(it.long("id"), it.long("conversationId"), MessageRole.valueOf(it.string("role")), it.string("content"), it.long("createdAt")) },
-            root.getJSONArray("coreMemories").mapObjects { CoreMemory(it.long("id"), it.string("content"), it.long("createdAt"), it.long("updatedAt")) },
-            root.getJSONArray("episodicMemories").mapObjects { EpisodicMemory(it.long("id"), it.string("title"), it.string("content"), it.long("occurredAt"), it.long("createdAt")) },
-            root.getJSONArray("dailySummaries").mapObjects { DailySummary(it.long("id"), it.string("date"), it.string("content"), it.long("createdAt"), it.long("updatedAt")) },
-        )
+        try {
+            val root = JSONObject(json)
+            require(root.getString("format") == "monga-backup") { "Monga 백업 파일이 아닙니다." }
+            require(root.getInt("version") == VERSION) { "지원하지 않는 백업 버전입니다." }
+
+            return DatabaseSnapshot(
+                root.getJSONArray("conversations").mapObjects { Conversation(it.long("id"), it.string("title"), it.long("createdAt"), it.long("updatedAt")) },
+                root.getJSONArray("messages").mapObjects { Message(it.long("id"), it.long("conversationId"), MessageRole.valueOf(it.string("role")), it.string("content"), it.long("createdAt")) },
+                root.getJSONArray("coreMemories").mapObjects { CoreMemory(it.long("id"), it.string("content"), it.long("createdAt"), it.long("updatedAt")) },
+                root.getJSONArray("episodicMemories").mapObjects { EpisodicMemory(it.long("id"), it.string("title"), it.string("content"), it.long("occurredAt"), it.long("createdAt")) },
+                root.getJSONArray("dailySummaries").mapObjects { DailySummary(it.long("id"), it.string("date"), it.string("content"), it.long("createdAt"), it.long("updatedAt")) },
+            )
+        } catch (e: JSONException) {
+            throw IllegalArgumentException(
+                "백업 파일이 손상되었거나 필수 데이터가 누락되었습니다.",
+                e,
+            )
+        }
     }
 
     private fun conversation(v: Conversation) = obj("id" to v.id, "title" to v.title, "createdAt" to v.createdAt, "updatedAt" to v.updatedAt)
