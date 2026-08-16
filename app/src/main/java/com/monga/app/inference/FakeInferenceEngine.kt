@@ -7,8 +7,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
 import java.util.concurrent.atomic.AtomicBoolean
 
-class FakeInferenceEngine : InferenceEngine {
-    private val _state = MutableStateFlow<InferenceState>(InferenceState.NoModel)
+class FakeInferenceEngine(
+    initiallyReady: Boolean = false,
+) : InferenceEngine {
+    private val _state = MutableStateFlow<InferenceState>(
+        if (initiallyReady) InferenceState.Ready else InferenceState.NoModel
+    )
     override val state: StateFlow<InferenceState> = _state
 
     private val cancelled = AtomicBoolean(false)

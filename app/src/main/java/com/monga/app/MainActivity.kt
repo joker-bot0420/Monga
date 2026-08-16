@@ -12,10 +12,18 @@ import com.monga.app.ui.theme.MongaTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val repository = (application as MongaApplication).repository
+        val app = application as MongaApplication
+        val repository = app.repository
+        val chatCoordinator = app.chatCoordinator
         setContent {
             MongaTheme {
-                val vm: MongaViewModel = viewModel(factory = MongaViewModelFactory(repository))
+                val vm: MongaViewModel = viewModel(
+                    factory = MongaViewModelFactory(
+                        repository,
+                        chatCoordinator,
+                    )
+                )
+
                 MongaApp(vm)
             }
         }

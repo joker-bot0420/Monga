@@ -10,8 +10,13 @@ import com.monga.app.data.local.CoreMemory
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import com.monga.app.chat.ChatCoordinator
+import com.monga.app.chat.ChatResult
 
-class MongaViewModel(private val repository: MongaRepository) : ViewModel() {
+class MongaViewModel(
+    private val repository: MongaRepository,
+    private val chatCoordinator: ChatCoordinator,
+) : ViewModel() {
     val conversations = repository.conversations.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val coreMemories = repository.coreMemories.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val episodicMemories = repository.episodicMemories.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -35,8 +40,18 @@ class MongaViewModel(private val repository: MongaRepository) : ViewModel() {
     fun newConversation() = viewModelScope.launch { selectedConversation.value = repository.createConversation() }
     fun selectConversation(id: Long) { selectedConversation.value = id }
     fun send(text: String) = viewModelScope.launch {
-        val id = selectedConversation.value ?: repository.createConversation().also { selectedConversation.value = it }
-        repository.send(id, text)
+        val id = selectedConversation.value
+            ?: repository.createConversation().also { selectedConversation.value = it }
+
+        when (chatCoordinator.send(id, text)) {
+            ChatResult.Completed,
+            ChatResult.Cancelled,
+            ChatResult.Ignored -> Unit
+
+            is ChatResult.Failed -> {
+                notice.value = "응답을 생성하지 못했습니다."
+            }
+        }
     }
     fun addMemory(text: String) = viewModelScope.launch { if (text.isNotBlank()) repository.addCoreMemory(text) }
     fun updateMemory(memory: CoreMemory, text: String) = viewModelScope.launch { if (text.isNotBlank()) repository.updateCoreMemory(memory, text) }
@@ -50,8 +65,11 @@ class MongaViewModel(private val repository: MongaRepository) : ViewModel() {
     }
 }
 
-class MongaViewModelFactory(private val repository: MongaRepository) : ViewModelProvider.Factory {
+class MongaViewModelFactory(
+    private val repository: MongaRepository,
+    private val chatCoordinator: ChatCoordinator,
+) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T = MongaViewModel(repository) as T
+    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+        MongaViewModel(repository, chatCoordinator) as T
 }
-
