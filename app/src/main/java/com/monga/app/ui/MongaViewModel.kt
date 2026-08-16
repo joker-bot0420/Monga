@@ -12,10 +12,14 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import com.monga.app.chat.ChatCoordinator
 import com.monga.app.chat.ChatResult
+import com.monga.app.data.model.ModelPreferences
+import com.monga.app.data.model.ModelStore
 
 class MongaViewModel(
     private val repository: MongaRepository,
     private val chatCoordinator: ChatCoordinator,
+    private val modelStore: ModelStore,
+    private val modelPreferences: ModelPreferences,
 ) : ViewModel() {
     val conversations = repository.conversations.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val coreMemories = repository.coreMemories.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -28,6 +32,13 @@ class MongaViewModel(
     val datedMessages = selectedDate.flatMapLatest(repository::messages)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val notice = MutableStateFlow<String?>(null)
+
+    val selectedModelName = modelPreferences.selectedModelName
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            null,
+        )
 
     init {
         viewModelScope.launch {
@@ -59,6 +70,19 @@ class MongaViewModel(
     fun changeDate(days: Long) { selectedDate.value = selectedDate.value.plusDays(days) }
     fun export(context: Context, uri: Uri) = runCatchingTask("백업을 저장했습니다.") { repository.export(context, uri) }
     fun restore(uri: Uri) = runCatchingTask("백업을 복원했습니다.") { repository.restore(uri) }
+    fun importModel(uri: Uri) = viewModelScope.launch {
+        notice.value = runCatching {
+            val imported = modelStore.importModel(uri)
+
+            modelPreferences.setSelectedModelName(
+                imported.displayName
+            )
+
+            "모델을 가져왔습니다: ${imported.displayName}"
+        }.getOrElse {
+            "오류: ${it.message ?: "알 수 없는 오류"}"
+        }
+    }
     fun clearNotice() { notice.value = null }
     private fun runCatchingTask(success: String, block: suspend () -> Unit) = viewModelScope.launch {
         notice.value = runCatching { block() }.fold({ success }, { "오류: ${it.message ?: "알 수 없는 오류"}" })
@@ -68,8 +92,15 @@ class MongaViewModel(
 class MongaViewModelFactory(
     private val repository: MongaRepository,
     private val chatCoordinator: ChatCoordinator,
+    private val modelStore: ModelStore,
+    private val modelPreferences: ModelPreferences,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        MongaViewModel(repository, chatCoordinator) as T
+        MongaViewModel(
+            repository,
+            chatCoordinator,
+            modelStore,
+            modelPreferences,
+        ) as T
 }
