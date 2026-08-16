@@ -54,7 +54,7 @@ fun MongaApp(vm: MongaViewModel) {
             composable(Destination.Chat.route) { ChatScreen(vm) }
             composable(Destination.Core.route) { CoreMemoryScreen(vm) }
             composable(Destination.History.route) { MemoryHistoryScreen(vm) }
-            composable(Destination.Settings.route) { SettingsScreen() }
+            composable(Destination.Settings.route) { SettingsScreen(vm) }
             composable(Destination.Backup.route) { BackupScreen(vm) }
         }
     }
@@ -112,11 +112,32 @@ fun MongaApp(vm: MongaViewModel) {
     }
 }
 
-@Composable private fun SettingsScreen() {
+@Composable private fun SettingsScreen(vm: MongaViewModel) {
+    val selectedModelName by vm.selectedModelName.collectAsStateWithLifecycle()
+
+    val modelLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let(vm::importModel)
+    }
+
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Settings", style = MaterialTheme.typography.headlineSmall)
         ListItem(headlineContent = { Text("실행 모드") }, supportingContent = { Text("완전 오프라인") })
-        ListItem(headlineContent = { Text("로컬 모델") }, supportingContent = { Text("llama.cpp / GGUF 연결 예정") })
+        ListItem(
+            headlineContent = { Text("로컬 모델") },
+            supportingContent = {
+                Text(selectedModelName ?: "선택된 모델 없음")
+            }
+        )
+
+        Button(
+            onClick = {
+                modelLauncher.launch(arrayOf("*/*"))
+            }
+        ) {
+            Text("GGUF 모델 선택")
+        }
         ListItem(headlineContent = { Text("최소 Android") }, supportingContent = { Text("Android 12 (API 31)") })
     }
 }

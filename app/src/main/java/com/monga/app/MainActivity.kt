@@ -15,12 +15,16 @@ class MainActivity : ComponentActivity() {
         val app = application as MongaApplication
         val repository = app.repository
         val chatCoordinator = app.chatCoordinator
+        val modelStore = app.modelStore
+        val modelPreferences = app.modelPreferences
         setContent {
             MongaTheme {
                 val vm: MongaViewModel = viewModel(
                     factory = MongaViewModelFactory(
                         repository,
                         chatCoordinator,
+                        modelStore,
+                        modelPreferences,
                     )
                 )
 
