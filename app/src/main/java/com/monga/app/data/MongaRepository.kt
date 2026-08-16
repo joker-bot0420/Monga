@@ -10,7 +10,10 @@ import com.monga.app.util.epochRange
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
 
-class MongaRepository(private val database: MongaDatabase, private val backupStore: SafBackupStore) {
+class MongaRepository(
+    private val database: MongaDatabase,
+    private val backupStore: SafBackupStore,
+) : ChatStore {
     private val dao = database.dao()
     val conversations = dao.observeConversations()
     val coreMemories = dao.observeCoreMemories()
@@ -24,13 +27,34 @@ class MongaRepository(private val database: MongaDatabase, private val backupSto
         return dao.insertConversation(Conversation(title = "새 대화", createdAt = now, updatedAt = now))
     }
 
-    suspend fun send(conversationId: Long, content: String) {
-        val text = content.trim(); if (text.isEmpty()) return
+    override suspend fun saveMessage(
+        conversationId: Long,
+        role: MessageRole,
+        content: String,
+    ) {
+        val text = content.trim()
+        if (text.isEmpty()) return
+
         val now = System.currentTimeMillis()
-        dao.insertMessage(Message(conversationId = conversationId, role = MessageRole.USER, content = text, createdAt = now))
-        dao.insertMessage(Message(conversationId = conversationId, role = MessageRole.ASSISTANT, content = "로컬 AI 모델은 다음 단계에서 연결됩니다.", createdAt = now + 1))
-        dao.touchConversation(conversationId, now + 1)
+
+        dao.insertMessage(
+            Message(
+                conversationId = conversationId,
+                role = role,
+                content = text,
+                createdAt = now,
+            )
+        )
+
+        dao.touchConversation(conversationId, now)
     }
+
+    override suspend fun recentMessages(
+        conversationId: Long,
+    ): List<Message> = dao.recentMessages(
+        conversationId = conversationId,
+        limit = ChatStore.MAX_RECENT_MESSAGES,
+    )
 
     suspend fun addCoreMemory(content: String) {
         val now = System.currentTimeMillis()
