@@ -17,6 +17,7 @@ class MainActivity : ComponentActivity() {
         val chatCoordinator = app.chatCoordinator
         val modelStore = app.modelStore
         val modelPreferences = app.modelPreferences
+        val llamaModelLoader = app.llamaModelLoader
         setContent {
             MongaTheme {
                 val vm: MongaViewModel = viewModel(
@@ -25,6 +26,7 @@ class MainActivity : ComponentActivity() {
                         chatCoordinator,
                         modelStore,
                         modelPreferences,
+                        llamaModelLoader,
                     )
                 )
 

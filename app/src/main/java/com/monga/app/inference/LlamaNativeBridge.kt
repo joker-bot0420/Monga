@@ -7,4 +7,7 @@ object LlamaNativeBridge {
 
     external fun nativePing(): String
     external fun nativeLlamaTimeUs(): Long
+
+    external fun nativeLoadModel(path: String): Boolean
+    external fun nativeUnloadModel()
 }

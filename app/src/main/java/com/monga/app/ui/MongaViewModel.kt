@@ -14,12 +14,14 @@ import com.monga.app.chat.ChatCoordinator
 import com.monga.app.chat.ChatResult
 import com.monga.app.data.model.ModelPreferences
 import com.monga.app.data.model.ModelStore
+import com.monga.app.inference.LlamaModelLoader
 
 class MongaViewModel(
     private val repository: MongaRepository,
     private val chatCoordinator: ChatCoordinator,
     private val modelStore: ModelStore,
     private val modelPreferences: ModelPreferences,
+    private val llamaModelLoader: LlamaModelLoader,
 ) : ViewModel() {
     val conversations = repository.conversations.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val coreMemories = repository.coreMemories.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -43,7 +45,29 @@ class MongaViewModel(
     init {
         viewModelScope.launch {
             conversations.collect { list ->
-                if (selectedConversation.value == null && list.isNotEmpty()) selectedConversation.value = list.first().id
+                if (selectedConversation.value == null && list.isNotEmpty()) {
+                    selectedConversation.value = list.first().id
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            val savedModelName = modelPreferences.selectedModelName.first()
+
+            if (savedModelName != null) {
+                runCatching {
+                    val modelFile = modelStore.getModelFile(savedModelName)
+
+                    check(
+                        llamaModelLoader.load(modelFile.absolutePath)
+                    ) {
+                        "llama.cpp가 저장된 모델을 불러오지 못했습니다."
+                    }
+                }.onFailure {
+                    notice.value =
+                        "저장된 모델을 다시 불러오지 못했습니다: " +
+                                (it.message ?: "알 수 없는 오류")
+                }
             }
         }
     }
@@ -74,11 +98,17 @@ class MongaViewModel(
         notice.value = runCatching {
             val imported = modelStore.importModel(uri)
 
+            check(
+                llamaModelLoader.load(imported.file.absolutePath)
+            ) {
+                "llama.cpp가 모델을 불러오지 못했습니다."
+            }
+
             modelPreferences.setSelectedModelName(
                 imported.displayName
             )
 
-            "모델을 가져왔습니다: ${imported.displayName}"
+            "모델을 가져오고 불러왔습니다: ${imported.displayName}"
         }.getOrElse {
             "오류: ${it.message ?: "알 수 없는 오류"}"
         }
@@ -94,7 +124,9 @@ class MongaViewModelFactory(
     private val chatCoordinator: ChatCoordinator,
     private val modelStore: ModelStore,
     private val modelPreferences: ModelPreferences,
+    private val llamaModelLoader: LlamaModelLoader,
 ) : ViewModelProvider.Factory {
+
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
         MongaViewModel(
@@ -102,5 +134,6 @@ class MongaViewModelFactory(
             chatCoordinator,
             modelStore,
             modelPreferences,
+            llamaModelLoader,
         ) as T
 }

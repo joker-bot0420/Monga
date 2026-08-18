@@ -33,7 +33,8 @@ class ModelStore(
             "모델 저장 폴더를 만들 수 없습니다."
         }
 
-        val target = File(modelsDirectory, safeName)
+        val target = createAvailableTarget(safeName)
+
         val temporary = File.createTempFile(
             "monga-model-",
             ".importing",
@@ -50,7 +51,14 @@ class ModelStore(
             check(temporary.inputStream().use { input ->
                 val magic = ByteArray(4)
                 input.read(magic) == 4 &&
-                        magic.contentEquals(byteArrayOf('G'.code.toByte(), 'G'.code.toByte(), 'U'.code.toByte(), 'F'.code.toByte()))
+                        magic.contentEquals(
+                            byteArrayOf(
+                                'G'.code.toByte(),
+                                'G'.code.toByte(),
+                                'U'.code.toByte(),
+                                'F'.code.toByte(),
+                            )
+                        )
             }) {
                 "올바른 GGUF 모델 파일이 아닙니다."
             }
@@ -59,14 +67,12 @@ class ModelStore(
                 Files.move(
                     temporary.toPath(),
                     target.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING,
                     StandardCopyOption.ATOMIC_MOVE,
                 )
             } catch (_: AtomicMoveNotSupportedException) {
                 Files.move(
                     temporary.toPath(),
                     target.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING,
                 )
             }
         } finally {
@@ -75,8 +81,38 @@ class ModelStore(
 
         ImportedModel(
             file = target,
-            displayName = safeName,
+            displayName = target.name,
         )
+    }
+
+    fun getModelFile(fileName: String): File {
+        val safeName = File(fileName).name
+        val file = File(modelsDirectory, safeName)
+
+        check(file.isFile) {
+            "선택한 모델 파일을 찾을 수 없습니다."
+        }
+
+        return file
+    }
+
+    private fun createAvailableTarget(fileName: String): File {
+        val original = File(fileName)
+        val baseName = original.nameWithoutExtension
+        val extension = original.extension
+
+        var candidate = File(modelsDirectory, original.name)
+        var suffix = 2
+
+        while (candidate.exists()) {
+            candidate = File(
+                modelsDirectory,
+                "$baseName ($suffix).$extension",
+            )
+            suffix++
+        }
+
+        return candidate
     }
 
     private fun resolveDisplayName(uri: Uri): String {

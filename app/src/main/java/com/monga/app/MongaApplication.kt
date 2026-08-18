@@ -9,6 +9,7 @@ import com.monga.app.inference.FakeInferenceEngine
 import com.monga.app.data.model.ModelPreferences
 import com.monga.app.data.model.ModelStore
 import java.io.File
+import com.monga.app.inference.LlamaModelLoader
 
 class MongaApplication : Application() {
     val repository by lazy {
@@ -27,6 +28,10 @@ class MongaApplication : Application() {
 
     val modelPreferences by lazy {
         ModelPreferences(this)
+    }
+
+    val llamaModelLoader by lazy {
+        LlamaModelLoader()
     }
 
     val inferenceEngine by lazy {
