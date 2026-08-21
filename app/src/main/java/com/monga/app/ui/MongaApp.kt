@@ -63,6 +63,8 @@ fun MongaApp(vm: MongaViewModel) {
 @Composable private fun ChatScreen(vm: MongaViewModel) {
     val conversations by vm.conversations.collectAsStateWithLifecycle()
     val messages by vm.messages.collectAsStateWithLifecycle()
+    val streamingDraft by vm.streamingDraft.collectAsStateWithLifecycle()
+    val isGenerating by vm.isGenerating.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -71,12 +73,38 @@ fun MongaApp(vm: MongaViewModel) {
         }
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(messages, key = { it.id }) { MessageCard(it) }
+            if (streamingDraft.isNotEmpty()) {
+                item(key = "streaming-assistant") {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("ASSISTANT", fontWeight = FontWeight.Bold)
+                            Text(streamingDraft)
+                        }
+                    }
+                }
+            }
             if (messages.isEmpty()) item { Text("Monga와 오프라인 대화를 시작하세요.") }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(input, { input = it }, Modifier.weight(1f), label = { Text("메시지") })
             Spacer(Modifier.width(8.dp))
-            Button(onClick = { vm.send(input); input = "" }, enabled = input.isNotBlank()) { Text("전송") }
+            if (isGenerating) {
+                Button(
+                    onClick = vm::cancelGeneration,
+                ) {
+                    Text("중지")
+                }
+            } else {
+                Button(
+                    onClick = {
+                        vm.send(input)
+                        input = ""
+                    },
+                    enabled = input.isNotBlank(),
+                ) {
+                    Text("전송")
+                }
+            }
         }
     }
 }

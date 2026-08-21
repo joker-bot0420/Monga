@@ -20,6 +20,7 @@ class ChatCoordinator(
     suspend fun send(
         conversationId: Long,
         content: String,
+        onToken: (String) -> Unit = {},
     ): ChatResult {
         val text = content.trim()
         if (text.isEmpty()) {
@@ -44,6 +45,7 @@ class ChatCoordinator(
                 when (event) {
                     is InferenceEvent.Token -> {
                         response.append(event.text)
+                        onToken(response.toString())
                     }
 
                     InferenceEvent.Completed -> {

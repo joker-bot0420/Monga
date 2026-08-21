@@ -5,11 +5,11 @@ import com.monga.app.chat.ChatCoordinator
 import com.monga.app.data.MongaRepository
 import com.monga.app.data.backup.SafBackupStore
 import com.monga.app.data.local.MongaDatabase
-import com.monga.app.inference.FakeInferenceEngine
 import com.monga.app.data.model.ModelPreferences
 import com.monga.app.data.model.ModelStore
-import java.io.File
+import com.monga.app.inference.LlamaInferenceEngine
 import com.monga.app.inference.LlamaModelLoader
+import java.io.File
 
 class MongaApplication : Application() {
     val repository by lazy {
@@ -30,12 +30,12 @@ class MongaApplication : Application() {
         ModelPreferences(this)
     }
 
-    val llamaModelLoader by lazy {
-        LlamaModelLoader()
+    val inferenceEngine by lazy {
+        LlamaInferenceEngine()
     }
 
-    val inferenceEngine by lazy {
-        FakeInferenceEngine(initiallyReady = true)
+    val llamaModelLoader by lazy {
+        LlamaModelLoader(inferenceEngine)
     }
 
     val chatCoordinator by lazy {

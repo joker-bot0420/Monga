@@ -10,4 +10,13 @@ object LlamaNativeBridge {
 
     external fun nativeLoadModel(path: String): Boolean
     external fun nativeUnloadModel()
+
+    external fun nativeStartGeneration(
+        prompt: String,
+        maxTokens: Int,
+    ): Boolean
+
+    external fun nativeNextToken(): ByteArray?
+    external fun nativeCancelGeneration()
+    external fun nativeFinishGeneration()
 }
