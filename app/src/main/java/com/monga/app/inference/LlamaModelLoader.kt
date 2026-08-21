@@ -3,15 +3,19 @@ package com.monga.app.inference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-class LlamaModelLoader {
+class LlamaModelLoader(
+    private val inferenceEngine: InferenceEngine,
+) {
 
     suspend fun load(path: String): Boolean =
         withContext(Dispatchers.IO) {
-            LlamaNativeBridge.nativeLoadModel(path)
+            inferenceEngine.loadModel(path)
+
+            inferenceEngine.state.value == InferenceState.Ready
         }
 
     suspend fun unload() =
         withContext(Dispatchers.IO) {
-            LlamaNativeBridge.nativeUnloadModel()
+            inferenceEngine.unload()
         }
 }

@@ -33,7 +33,13 @@ class MongaViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val datedMessages = selectedDate.flatMapLatest(repository::messages)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val notice = MutableStateFlow<String?>(null)
+
+    private val _streamingDraft = MutableStateFlow("")
+    val streamingDraft: StateFlow<String> = _streamingDraft
+    private val _isGenerating = MutableStateFlow(false)
+    val isGenerating: StateFlow<Boolean> = _isGenerating
 
     val selectedModelName = modelPreferences.selectedModelName
         .stateIn(
@@ -74,20 +80,48 @@ class MongaViewModel(
 
     fun newConversation() = viewModelScope.launch { selectedConversation.value = repository.createConversation() }
     fun selectConversation(id: Long) { selectedConversation.value = id }
+
     fun send(text: String) = viewModelScope.launch {
         val id = selectedConversation.value
-            ?: repository.createConversation().also { selectedConversation.value = it }
+            ?: repository.createConversation().also {
+                selectedConversation.value = it
+            }
 
-        when (chatCoordinator.send(id, text)) {
-            ChatResult.Completed,
-            ChatResult.Cancelled,
-            ChatResult.Ignored -> Unit
+            _streamingDraft.value = ""
+            _isGenerating.value = true
 
-            is ChatResult.Failed -> {
-                notice.value = "응답을 생성하지 못했습니다."
+            try {
+                when (
+                    val result = chatCoordinator.send(
+                        conversationId = id,
+                        content = text,
+                        onToken = { draft ->
+                            _streamingDraft.value = draft
+                        },
+                    )
+                ) {
+                    ChatResult.Completed,
+                    ChatResult.Cancelled,
+                    ChatResult.Ignored -> Unit
+
+                    is ChatResult.Failed -> {
+                        notice.value =
+                            "응답 생성 실패: " +
+                                    (result.cause.message
+                                        ?: result.cause::class.simpleName
+                                        ?: "알 수 없는 오류")
+                    }
+                }
+            } finally {
+                _streamingDraft.value = ""
+                _isGenerating.value = false
             }
         }
+
+    fun cancelGeneration() {
+        chatCoordinator.cancel()
     }
+
     fun addMemory(text: String) = viewModelScope.launch { if (text.isNotBlank()) repository.addCoreMemory(text) }
     fun updateMemory(memory: CoreMemory, text: String) = viewModelScope.launch { if (text.isNotBlank()) repository.updateCoreMemory(memory, text) }
     fun deleteMemory(memory: CoreMemory) = viewModelScope.launch { repository.deleteCoreMemory(memory) }
