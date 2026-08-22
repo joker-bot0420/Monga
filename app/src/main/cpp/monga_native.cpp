@@ -49,6 +49,66 @@ void throwIllegalState(JNIEnv *env, const char *message) {
   }
 }
 
+bool startGenerationFromFormattedPromptLocked(
+    const std::string &formattedPrompt, int maxTokens) {
+
+  const llama_vocab *vocab = llama_model_get_vocab(g_model);
+
+  const int tokenCount =
+      -llama_tokenize(vocab, formattedPrompt.c_str(), formattedPrompt.size(),
+                      nullptr, 0, true, true);
+
+  if (tokenCount <= 0) {
+    return false;
+  }
+
+  std::vector<llama_token> promptTokens(tokenCount);
+
+  const int tokenized =
+      llama_tokenize(vocab, formattedPrompt.c_str(), formattedPrompt.size(),
+                     promptTokens.data(), promptTokens.size(), true, true);
+
+  if (tokenized < 0) {
+    return false;
+  }
+
+  llama_context_params contextParams = llama_context_default_params();
+  contextParams.n_ctx = tokenCount + maxTokens;
+  contextParams.n_batch = tokenCount;
+  contextParams.no_perf = false;
+
+  g_context = llama_init_from_model(g_model, contextParams);
+
+  if (g_context == nullptr) {
+    clearGenerationLocked();
+    return false;
+  }
+
+  auto samplerParams = llama_sampler_chain_default_params();
+  samplerParams.no_perf = false;
+
+  g_sampler = llama_sampler_chain_init(samplerParams);
+
+  if (g_sampler == nullptr) {
+    clearGenerationLocked();
+    return false;
+  }
+
+  llama_sampler_chain_add(g_sampler, llama_sampler_init_greedy());
+
+  llama_batch batch = llama_batch_get_one(promptTokens.data(), tokenized);
+
+  if (llama_decode(g_context, batch) != 0) {
+    clearGenerationLocked();
+    return false;
+  }
+
+  g_generatedTokens = 0;
+  g_maxTokens = maxTokens;
+  g_cancelRequested.store(false);
+
+  return true;
+}
 } // namespace
 
 extern "C" JNIEXPORT jstring
@@ -171,69 +231,139 @@ Java_com_monga_app_inference_LlamaNativeBridge_nativeStartGeneration(
 
     if (formattedLength < 0) {
       throwIllegalState(env, "chat template apply failed");
-      return false;
+      return JNI_FALSE;
     }
 
     formattedPrompt.assign(formatted.data(),
                            static_cast<size_t>(formattedLength));
   }
 
-  const llama_vocab *vocab = llama_model_get_vocab(g_model);
+  return startGenerationFromFormattedPromptLocked(formattedPrompt, maxTokens)
+             ? JNI_TRUE
+             : JNI_FALSE;
+}
 
-  const int tokenCount =
-      -llama_tokenize(vocab, formattedPrompt.c_str(), formattedPrompt.size(),
-                      nullptr, 0, true, true);
-
-  if (tokenCount <= 0) {
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeStartChatGeneration(
+    JNIEnv *env, jobject, jobjectArray roles, jobjectArray contents,
+    jint maxTokens) {
+  if (roles == nullptr || contents == nullptr || maxTokens <= 0) {
     return JNI_FALSE;
   }
 
-  std::vector<llama_token> promptTokens(tokenCount);
+  const jsize roleCount = env->GetArrayLength(roles);
+  const jsize contentCount = env->GetArrayLength(contents);
 
-  const int tokenized =
-      llama_tokenize(vocab, formattedPrompt.c_str(), formattedPrompt.size(),
-                     promptTokens.data(), promptTokens.size(), true, true);
-
-  if (tokenized < 0) {
+  if (roleCount <= 0 || roleCount != contentCount) {
     return JNI_FALSE;
   }
 
-  llama_context_params contextParams = llama_context_default_params();
-  contextParams.n_ctx = tokenCount + maxTokens;
-  contextParams.n_batch = tokenCount;
-  contextParams.no_perf = false;
+  std::vector<std::string> roleStrings;
+  std::vector<std::string> contentStrings;
 
-  g_context = llama_init_from_model(g_model, contextParams);
+  roleStrings.reserve(static_cast<size_t>(roleCount));
+  contentStrings.reserve(static_cast<size_t>(contentCount));
 
-  if (g_context == nullptr) {
-    clearGenerationLocked();
+  for (jsize i = 0; i < roleCount; ++i) {
+    auto role = static_cast<jstring>(env->GetObjectArrayElement(roles, i));
+    auto content =
+        static_cast<jstring>(env->GetObjectArrayElement(contents, i));
+
+    if (role == nullptr || content == nullptr) {
+      if (role != nullptr) {
+        env->DeleteLocalRef(role);
+      }
+
+      if (content != nullptr) {
+        env->DeleteLocalRef(content);
+      }
+
+      return JNI_FALSE;
+    }
+
+    const char *roleChars = env->GetStringUTFChars(role, nullptr);
+    const char *contentChars = env->GetStringUTFChars(content, nullptr);
+
+    if (roleChars == nullptr || contentChars == nullptr) {
+      if (roleChars != nullptr) {
+        env->ReleaseStringUTFChars(role, roleChars);
+      }
+
+      if (contentChars != nullptr) {
+        env->ReleaseStringUTFChars(content, contentChars);
+      }
+
+      env->DeleteLocalRef(role);
+      env->DeleteLocalRef(content);
+
+      return JNI_FALSE;
+    }
+
+    roleStrings.emplace_back(roleChars);
+    contentStrings.emplace_back(contentChars);
+
+    env->ReleaseStringUTFChars(role, roleChars);
+    env->ReleaseStringUTFChars(content, contentChars);
+
+    env->DeleteLocalRef(role);
+    env->DeleteLocalRef(content);
+  }
+
+  std::lock_guard<std::mutex> lock(g_modelMutex);
+
+  if (g_model == nullptr) {
     return JNI_FALSE;
   }
 
-  auto samplerParams = llama_sampler_chain_default_params();
-  samplerParams.no_perf = false;
+  clearGenerationLocked();
 
-  g_sampler = llama_sampler_chain_init(samplerParams);
+  const char *chatTemplate =
+      llama_model_chat_template(g_model, /* name */ nullptr);
 
-  if (g_sampler == nullptr) {
-    clearGenerationLocked();
+  if (chatTemplate == nullptr) {
+    throwIllegalState(env, "Model does not provide a chat template.");
     return JNI_FALSE;
   }
 
-  llama_sampler_chain_add(g_sampler, llama_sampler_init_greedy());
+  std::vector<llama_chat_message> messages;
+  messages.reserve(static_cast<size_t>(roleCount));
 
-  llama_batch batch = llama_batch_get_one(promptTokens.data(), tokenized);
+  size_t estimatedSize = 256;
 
-  if (llama_decode(g_context, batch) != 0) {
-    clearGenerationLocked();
+  for (size_t i = 0; i < roleStrings.size(); ++i) {
+    messages.push_back({
+        roleStrings[i].c_str(),
+        contentStrings[i].c_str(),
+    });
+
+    estimatedSize += roleStrings[i].size() + contentStrings[i].size() + 32;
+  }
+
+  std::vector<char> formatted(estimatedSize);
+
+  int32_t formattedLength = llama_chat_apply_template(
+      chatTemplate, messages.data(), messages.size(), true, formatted.data(),
+      static_cast<int32_t>(formatted.size()));
+
+  if (formattedLength > static_cast<int32_t>(formatted.size())) {
+    formatted.resize(static_cast<size_t>(formattedLength));
+
+    formattedLength = llama_chat_apply_template(
+        chatTemplate, messages.data(), messages.size(), true, formatted.data(),
+        static_cast<int32_t>(formatted.size()));
+  }
+
+  if (formattedLength < 0) {
+    throwIllegalState(env, "chat template apply failed");
     return JNI_FALSE;
   }
 
-  g_generatedTokens = 0;
-  g_maxTokens = maxTokens;
-  g_cancelRequested.store(false);
+  const std::string formattedPrompt(formatted.data(),
+                                    static_cast<size_t>(formattedLength));
 
-  return JNI_TRUE;
+  return startGenerationFromFormattedPromptLocked(formattedPrompt, maxTokens)
+             ? JNI_TRUE
+             : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL

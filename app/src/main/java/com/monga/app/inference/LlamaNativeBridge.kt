@@ -16,6 +16,12 @@ object LlamaNativeBridge {
         maxTokens: Int,
     ): Boolean
 
+    external fun nativeStartChatGeneration(
+        roles: Array<String>,
+        contents: Array<String>,
+        maxTokens: Int,
+    ): Boolean
+
     external fun nativeNextToken(): ByteArray?
     external fun nativeCancelGeneration()
     external fun nativeFinishGeneration()
