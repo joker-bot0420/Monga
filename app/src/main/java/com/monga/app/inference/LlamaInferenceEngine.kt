@@ -43,7 +43,31 @@ class LlamaInferenceEngine(
         }
     }
 
-    override fun generate(prompt: String): Flow<InferenceEvent> = flow {
+    override fun generate(prompt: String): Flow<InferenceEvent> =
+        generate(
+            listOf(
+                InferenceMessage(
+                    role = InferenceRole.USER,
+                    content = prompt,
+                )
+            )
+        )
+
+    override fun generate(
+        messages: List<InferenceMessage>,
+    ): Flow<InferenceEvent> = flow {
+
+        if (messages.isEmpty()) {
+            emit(
+                InferenceEvent.Failed(
+                    IllegalArgumentException(
+                        "대화 메시지가 비어 있습니다."
+                    )
+                )
+            )
+            return@flow
+        }
+
         if (_state.value != InferenceState.Ready) {
             val currentState = _state.value
 
@@ -64,8 +88,13 @@ class LlamaInferenceEngine(
 
         try {
 
-            val started = LlamaNativeBridge.nativeStartGeneration(
-                prompt = prompt,
+            val started = LlamaNativeBridge.nativeStartChatGeneration(
+                roles = messages
+                    .map { it.role.wireValue }
+                    .toTypedArray(),
+                contents = messages
+                    .map { it.content }
+                    .toTypedArray(),
                 maxTokens = maxTokens,
             )
 

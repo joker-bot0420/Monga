@@ -5,6 +5,8 @@ import com.monga.app.data.local.MessageRole
 import com.monga.app.inference.InferenceEngine
 import com.monga.app.inference.InferenceEvent
 import kotlinx.coroutines.CancellationException
+import com.monga.app.inference.InferenceMessage
+import com.monga.app.inference.InferenceRole
 
 sealed interface ChatResult {
     data object Completed : ChatResult
@@ -33,11 +35,23 @@ class ChatCoordinator(
             content = text,
         )
 
+        val messages = chatStore.recentMessages(conversationId)
+            .map { message ->
+                InferenceMessage(
+                    role = when (message.role) {
+                        MessageRole.SYSTEM -> InferenceRole.SYSTEM
+                        MessageRole.USER -> InferenceRole.USER
+                        MessageRole.ASSISTANT -> InferenceRole.ASSISTANT
+                    },
+                    content = message.content,
+                )
+            }
+
         val response = StringBuilder()
         var result: ChatResult? = null
 
         try {
-            inferenceEngine.generate(text).collect { event ->
+            inferenceEngine.generate(messages).collect { event ->
                 if (result != null) {
                     return@collect
                 }
