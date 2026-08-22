@@ -10,6 +10,8 @@ import com.monga.app.data.model.ModelStore
 import com.monga.app.inference.LlamaInferenceEngine
 import com.monga.app.inference.LlamaModelLoader
 import java.io.File
+import com.monga.app.chat.DefaultSystemPromptProvider
+import com.monga.app.chat.DefaultCoreMemoryProvider
 
 class MongaApplication : Application() {
     val repository by lazy {
@@ -42,6 +44,11 @@ class MongaApplication : Application() {
         ChatCoordinator(
             chatStore = repository,
             inferenceEngine = inferenceEngine,
+            systemPromptProvider = DefaultSystemPromptProvider(
+                coreMemoryProvider = DefaultCoreMemoryProvider(
+                    coreMemories = repository.coreMemories,
+                ),
+            ),
         )
     }
 }

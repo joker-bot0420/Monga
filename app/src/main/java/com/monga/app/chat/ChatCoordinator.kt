@@ -18,6 +18,7 @@ sealed interface ChatResult {
 class ChatCoordinator(
     private val chatStore: ChatStore,
     private val inferenceEngine: InferenceEngine,
+    private val systemPromptProvider: SystemPromptProvider,
 ) {
     suspend fun send(
         conversationId: Long,
@@ -35,7 +36,12 @@ class ChatCoordinator(
             content = text,
         )
 
-        val messages = chatStore.recentMessages(conversationId)
+        val messages = listOf(
+            InferenceMessage(
+                role = InferenceRole.SYSTEM,
+                content = systemPromptProvider.buildPrompt(),
+            )
+        ) + chatStore.recentMessages(conversationId)
             .map { message ->
                 InferenceMessage(
                     role = when (message.role) {
