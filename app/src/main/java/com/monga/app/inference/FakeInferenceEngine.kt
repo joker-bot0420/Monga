@@ -22,7 +22,9 @@ class FakeInferenceEngine(
         _state.value = InferenceState.Ready
     }
 
-    override fun generate(prompt: String): Flow<InferenceEvent> = flow {
+    override fun generate(
+        messages: List<InferenceMessage>,
+    ): Flow<InferenceEvent> = flow {
         if (_state.value != InferenceState.Ready) {
             emit(
                 InferenceEvent.Failed(
