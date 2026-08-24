@@ -14,8 +14,11 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.monga.app.inference.InferenceMessage
 
 class ChatCoordinatorTest {
+
+    private val systemPromptProvider = SystemPromptProvider { "" }
 
     @Test
     fun completedGenerationSavesUserAndAssistantMessages() = runBlocking {
@@ -25,7 +28,11 @@ class ChatCoordinatorTest {
             InferenceEvent.Token(" 몽아야"),
             InferenceEvent.Completed,
         )
-        val coordinator = ChatCoordinator(store, engine)
+        val coordinator = ChatCoordinator(
+            chatStore = store,
+            inferenceEngine = engine,
+            systemPromptProvider = systemPromptProvider,
+        )
 
         val result = coordinator.send(
             conversationId = 1L,
@@ -49,7 +56,11 @@ class ChatCoordinatorTest {
             InferenceEvent.Token("완성되지 않은"),
             InferenceEvent.Cancelled,
         )
-        val coordinator = ChatCoordinator(store, engine)
+        val coordinator = ChatCoordinator(
+            chatStore = store,
+            inferenceEngine = engine,
+            systemPromptProvider = systemPromptProvider,
+        )
 
         val result = coordinator.send(
             conversationId = 1L,
@@ -68,7 +79,11 @@ class ChatCoordinatorTest {
         val engine = StubInferenceEngine(
             InferenceEvent.Failed(failure),
         )
-        val coordinator = ChatCoordinator(store, engine)
+        val coordinator = ChatCoordinator(
+            chatStore = store,
+            inferenceEngine = engine,
+            systemPromptProvider = systemPromptProvider,
+        )
 
         val result = coordinator.send(
             conversationId = 1L,
@@ -119,7 +134,9 @@ class ChatCoordinatorTest {
             _state.value = InferenceState.Ready
         }
 
-        override fun generate(prompt: String): Flow<InferenceEvent> =
+        override fun generate(
+            messages: List<InferenceMessage>,
+        ): Flow<InferenceEvent> =
             flowOf(*generatedEvents.toTypedArray())
 
         override fun cancel() = Unit
