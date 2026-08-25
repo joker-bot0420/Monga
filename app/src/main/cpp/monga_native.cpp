@@ -72,17 +72,26 @@ bool startGenerationFromFormattedPromptLocked(
     return false;
   }
 
-  llama_context_params contextParams = llama_context_default_params();
-  contextParams.n_ctx = tokenCount + maxTokens;
-  contextParams.n_batch = tokenCount;
-  contextParams.no_perf = false;
+    const int32_t modelContextSize = llama_model_n_ctx_train(g_model);
+    const int64_t requestedContextSize =
+            static_cast<int64_t>(tokenCount) + static_cast<int64_t>(maxTokens);
 
-  g_context = llama_init_from_model(g_model, contextParams);
+    if (modelContextSize <= 0 ||
+        requestedContextSize > static_cast<int64_t>(modelContextSize)) {
+        return false;
+    }
 
-  if (g_context == nullptr) {
-    clearGenerationLocked();
-    return false;
-  }
+    llama_context_params contextParams = llama_context_default_params();
+    contextParams.n_ctx = static_cast<uint32_t>(requestedContextSize);
+    contextParams.n_batch = tokenCount;
+    contextParams.no_perf = false;
+
+    g_context = llama_init_from_model(g_model, contextParams);
+
+    if (g_context == nullptr) {
+        clearGenerationLocked();
+        return false;
+    }
 
   auto samplerParams = llama_sampler_chain_default_params();
   samplerParams.no_perf = false;
@@ -180,6 +189,18 @@ Java_com_monga_app_inference_LlamaNativeBridge_nativeUnloadModel(JNIEnv *,
   }
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeModelContextSize(
+        JNIEnv *, jobject) {
+    std::lock_guard<std::mutex> lock(g_modelMutex);
+
+    if (g_model == nullptr) {
+        return 0;
+    }
+
+    return static_cast<jint>(llama_model_n_ctx_train(g_model));
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_monga_app_inference_LlamaNativeBridge_nativeStartGeneration(
     JNIEnv *env, jobject, jstring prompt, jint maxTokens) {
@@ -241,6 +262,142 @@ Java_com_monga_app_inference_LlamaNativeBridge_nativeStartGeneration(
   return startGenerationFromFormattedPromptLocked(formattedPrompt, maxTokens)
              ? JNI_TRUE
              : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeCountChatTokens(
+        JNIEnv *env, jobject, jobjectArray roles, jobjectArray contents) {
+
+    if (roles == nullptr || contents == nullptr) {
+        return -1;
+    }
+
+    const jsize roleCount = env->GetArrayLength(roles);
+    const jsize contentCount = env->GetArrayLength(contents);
+
+    if (roleCount <= 0 || roleCount != contentCount) {
+        return -1;
+    }
+
+    std::vector<std::string> roleStrings;
+    std::vector<std::string> contentStrings;
+
+    roleStrings.reserve(static_cast<size_t>(roleCount));
+    contentStrings.reserve(static_cast<size_t>(contentCount));
+
+    for (jsize i = 0; i < roleCount; ++i) {
+        auto role =
+                static_cast<jstring>(env->GetObjectArrayElement(roles, i));
+        auto content =
+                static_cast<jstring>(env->GetObjectArrayElement(contents, i));
+
+        if (role == nullptr || content == nullptr) {
+            if (role != nullptr) {
+                env->DeleteLocalRef(role);
+            }
+
+            if (content != nullptr) {
+                env->DeleteLocalRef(content);
+            }
+
+            return -1;
+        }
+
+        const char *roleChars = env->GetStringUTFChars(role, nullptr);
+        const char *contentChars = env->GetStringUTFChars(content, nullptr);
+
+        if (roleChars == nullptr || contentChars == nullptr) {
+            if (roleChars != nullptr) {
+                env->ReleaseStringUTFChars(role, roleChars);
+            }
+
+            if (contentChars != nullptr) {
+                env->ReleaseStringUTFChars(content, contentChars);
+            }
+
+            env->DeleteLocalRef(role);
+            env->DeleteLocalRef(content);
+
+            return -1;
+        }
+
+        roleStrings.emplace_back(roleChars);
+        contentStrings.emplace_back(contentChars);
+
+        env->ReleaseStringUTFChars(role, roleChars);
+        env->ReleaseStringUTFChars(content, contentChars);
+
+        env->DeleteLocalRef(role);
+        env->DeleteLocalRef(content);
+    }
+
+    std::lock_guard<std::mutex> lock(g_modelMutex);
+
+    if (g_model == nullptr) {
+        return -1;
+    }
+
+    const char *chatTemplate =
+            llama_model_chat_template(g_model, /* name */ nullptr);
+
+    if (chatTemplate == nullptr) {
+        return -1;
+    }
+
+    std::vector<llama_chat_message> messages;
+    messages.reserve(static_cast<size_t>(roleCount));
+
+    size_t estimatedSize = 256;
+
+    for (size_t i = 0; i < roleStrings.size(); ++i) {
+        messages.push_back({
+                                   roleStrings[i].c_str(),
+                                   contentStrings[i].c_str(),
+                           });
+
+        estimatedSize +=
+                roleStrings[i].size() + contentStrings[i].size() + 32;
+    }
+
+    std::vector<char> formatted(estimatedSize);
+
+    int32_t formattedLength = llama_chat_apply_template(
+            chatTemplate,
+            messages.data(),
+            messages.size(),
+            true,
+            formatted.data(),
+            static_cast<int32_t>(formatted.size()));
+
+    if (formattedLength > static_cast<int32_t>(formatted.size())) {
+        formatted.resize(static_cast<size_t>(formattedLength));
+
+        formattedLength = llama_chat_apply_template(
+                chatTemplate,
+                messages.data(),
+                messages.size(),
+                true,
+                formatted.data(),
+                static_cast<int32_t>(formatted.size()));
+    }
+
+    if (formattedLength < 0) {
+        return -1;
+    }
+
+    const llama_vocab *vocab = llama_model_get_vocab(g_model);
+
+    const int tokenCount =
+            -llama_tokenize(
+                    vocab,
+                    formatted.data(),
+                    static_cast<size_t>(formattedLength),
+                    nullptr,
+                    0,
+                    true,
+                    true);
+
+    return tokenCount > 0 ? tokenCount : -1;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

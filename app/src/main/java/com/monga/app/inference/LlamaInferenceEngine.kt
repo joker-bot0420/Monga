@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class LlamaInferenceEngine(
     private val maxTokens: Int = 64,
+    private val contextBudgetTokens: Int = 4096,
 ) : InferenceEngine {
 
     private val _state = MutableStateFlow<InferenceState>(
@@ -81,6 +82,96 @@ class LlamaInferenceEngine(
             return@flow
         }
 
+        val workingMessages = messages.toMutableList()
+
+        var roles = workingMessages
+            .map { it.role.wireValue }
+            .toTypedArray()
+
+        var contents = workingMessages
+            .map { it.content }
+            .toTypedArray()
+
+        var promptTokens = LlamaNativeBridge.nativeCountChatTokens(
+            roles = roles,
+            contents = contents,
+        )
+
+        val modelContextSize =
+            LlamaNativeBridge.nativeModelContextSize()
+
+        if (
+            promptTokens <= 0 ||
+            modelContextSize <= 0 ||
+            contextBudgetTokens <= 0
+        ) {
+            emit(
+                InferenceEvent.Failed(
+                    IllegalStateException(
+                        "대화 컨텍스트 크기를 확인하지 못했습니다."
+                    )
+                )
+            )
+            return@flow
+        }
+
+        val effectiveContextBudget =
+            minOf(modelContextSize, contextBudgetTokens)
+
+        while (
+            promptTokens.toLong() + maxTokens.toLong() >
+            effectiveContextBudget.toLong() &&
+            workingMessages.size > 1
+        ) {
+            val trimmedMessages =
+                ContextBudgetPolicy.dropOldestTurn(workingMessages)
+
+            if (trimmedMessages == workingMessages) {
+                break
+            }
+
+            workingMessages.clear()
+            workingMessages.addAll(trimmedMessages)
+
+            roles = workingMessages
+                .map { it.role.wireValue }
+                .toTypedArray()
+
+            contents = workingMessages
+                .map { it.content }
+                .toTypedArray()
+
+            promptTokens = LlamaNativeBridge.nativeCountChatTokens(
+                roles = roles,
+                contents = contents,
+            )
+
+            if (promptTokens <= 0) {
+                emit(
+                    InferenceEvent.Failed(
+                        IllegalStateException(
+                            "대화 컨텍스트 크기를 확인하지 못했습니다."
+                        )
+                    )
+                )
+                return@flow
+            }
+        }
+
+        if (
+            promptTokens.toLong() + maxTokens.toLong() >
+            effectiveContextBudget.toLong()
+        ) {
+            emit(
+                InferenceEvent.Failed(
+                    IllegalArgumentException(
+                        "대화가 사용 가능한 컨텍스트 예산을 초과했습니다."
+                    )
+                )
+            )
+            return@flow
+        }
+
         cancelled.set(false)
         _state.value = InferenceState.Generating
 
@@ -89,12 +180,8 @@ class LlamaInferenceEngine(
         try {
 
             val started = LlamaNativeBridge.nativeStartChatGeneration(
-                roles = messages
-                    .map { it.role.wireValue }
-                    .toTypedArray(),
-                contents = messages
-                    .map { it.content }
-                    .toTypedArray(),
+                roles = roles,
+                contents = contents,
                 maxTokens = maxTokens,
             )
 
