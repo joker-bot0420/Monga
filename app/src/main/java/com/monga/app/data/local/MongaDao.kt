@@ -14,6 +14,7 @@ interface MongaDao {
     @Insert suspend fun insertConversation(value: Conversation): Long
     @Insert suspend fun insertMessage(value: Message): Long
     @Insert suspend fun insertCoreMemory(value: CoreMemory): Long
+    @Insert suspend fun insertEpisodicMemory(value: EpisodicMemory): Long
     @Update suspend fun updateCoreMemory(value: CoreMemory)
     @Delete suspend fun deleteCoreMemory(value: CoreMemory)
 

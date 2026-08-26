@@ -56,6 +56,23 @@ class MongaRepository(
         limit = ChatStore.MAX_RECENT_MESSAGES,
     )
 
+    suspend fun addEpisodicMemory(
+        title: String,
+        content: String,
+        occurredAt: Long,
+    ) {
+        val now = System.currentTimeMillis()
+
+        dao.insertEpisodicMemory(
+            EpisodicMemory(
+                title = title.trim(),
+                content = content.trim(),
+                occurredAt = occurredAt,
+                createdAt = now,
+            )
+        )
+    }
+
     suspend fun addCoreMemory(content: String) {
         val now = System.currentTimeMillis()
         dao.insertCoreMemory(CoreMemory(content = content.trim(), createdAt = now, updatedAt = now))
