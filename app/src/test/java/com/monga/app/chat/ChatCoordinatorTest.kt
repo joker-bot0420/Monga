@@ -119,6 +119,38 @@ class ChatCoordinatorTest {
         ): List<Message> = emptyList()
     }
 
+    @Test
+    fun nonReadyEngineSkipsSystemPromptBuild() = runBlocking {
+        val store = FakeChatStore()
+        val engine = StubInferenceEngine()
+        engine.setState(InferenceState.Loading)
+
+        var promptBuildCount = 0
+
+        val coordinator = ChatCoordinator(
+            chatStore = store,
+            inferenceEngine = engine,
+            systemPromptProvider = SystemPromptProvider {
+                promptBuildCount += 1
+                ""
+            },
+        )
+
+        val result = coordinator.send(
+            conversationId = 1L,
+            content = "테스트",
+        )
+
+        assertTrue(result is ChatResult.Failed)
+        assertEquals(0, promptBuildCount)
+
+        assertEquals(1, store.savedMessages.size)
+        assertEquals(
+            MessageRole.USER,
+            store.savedMessages.single().role,
+        )
+    }
+
     private class StubInferenceEngine(
         vararg events: InferenceEvent,
     ) : InferenceEngine {
@@ -129,6 +161,10 @@ class ChatCoordinatorTest {
         )
 
         override val state: StateFlow<InferenceState> = _state
+
+        fun setState(state: InferenceState) {
+            _state.value = state
+        }
 
         override suspend fun loadModel(path: String) {
             _state.value = InferenceState.Ready
