@@ -7,6 +7,7 @@ import com.monga.app.inference.InferenceEvent
 import kotlinx.coroutines.CancellationException
 import com.monga.app.inference.InferenceMessage
 import com.monga.app.inference.InferenceRole
+import com.monga.app.inference.InferenceState
 
 sealed interface ChatResult {
     data object Completed : ChatResult
@@ -35,6 +36,16 @@ class ChatCoordinator(
             role = MessageRole.USER,
             content = text,
         )
+
+        val currentState = inferenceEngine.state.value
+
+        if (currentState != InferenceState.Ready) {
+            return ChatResult.Failed(
+                IllegalStateException(
+                    "모델이 준비되지 않았습니다. 현재 상태: $currentState"
+                )
+            )
+        }
 
         val messages = listOf(
             InferenceMessage(
