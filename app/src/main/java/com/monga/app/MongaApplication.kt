@@ -12,6 +12,8 @@ import com.monga.app.inference.LlamaModelLoader
 import java.io.File
 import com.monga.app.chat.DefaultSystemPromptProvider
 import com.monga.app.chat.DefaultCoreMemoryProvider
+import com.monga.app.inference.InferenceRole
+import com.monga.app.inference.LlamaNativeBridge
 
 class MongaApplication : Application() {
     val repository by lazy {
@@ -47,6 +49,14 @@ class MongaApplication : Application() {
             systemPromptProvider = DefaultSystemPromptProvider(
                 coreMemoryProvider = DefaultCoreMemoryProvider(
                     coreMemories = repository.coreMemories,
+                    tokenCounter = { text ->
+                        LlamaNativeBridge.nativeCountChatTokens(
+                            roles = arrayOf(
+                                InferenceRole.SYSTEM.wireValue,
+                            ),
+                            contents = arrayOf(text),
+                        )
+                    },
                 ),
             ),
         )

@@ -6,11 +6,15 @@ import kotlinx.coroutines.flow.first
 
 class DefaultCoreMemoryProvider(
     private val coreMemories: Flow<List<CoreMemory>>,
+    private val tokenCounter: (String) -> Int,
+    private val tokenBudget: Int =
+        CoreMemoryBudgetPolicy.DEFAULT_TOKEN_BUDGET,
 ) : CoreMemoryProvider {
 
     override suspend fun buildMemory(): String =
-        coreMemories.first()
-            .joinToString(separator = "\n") { memory ->
-                "- ${memory.content}"
-            }
+        CoreMemoryBudgetPolicy.build(
+            memories = coreMemories.first(),
+            tokenBudget = tokenBudget,
+            tokenCounter = tokenCounter,
+        )
 }
