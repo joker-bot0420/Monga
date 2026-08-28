@@ -1,14 +1,23 @@
 package com.monga.app.chat
 
 class DefaultSystemPromptProvider(
+    private val personaProvider: PersonaProvider,
     private val coreMemoryProvider: CoreMemoryProvider,
 ) : SystemPromptProvider {
 
     override suspend fun buildPrompt(): String {
+        val persona = personaProvider.buildPersona().trim()
         val coreMemory = coreMemoryProvider.buildMemory().trim()
 
         return buildString {
             appendLine("너는 몽아라는 AI다.")
+
+            if (persona.isNotEmpty()) {
+                appendLine()
+                appendLine("[페르소나]")
+                appendLine(persona)
+            }
+
             appendLine()
             appendLine("규칙:")
             appendLine("- user와 assistant는 서로 다른 주체다.")
