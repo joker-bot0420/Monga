@@ -15,6 +15,7 @@ import com.monga.app.chat.ChatResult
 import com.monga.app.data.model.ModelPreferences
 import com.monga.app.data.model.ModelStore
 import com.monga.app.inference.LlamaModelLoader
+import com.monga.app.util.epochRange
 
 class MongaViewModel(
     private val repository: MongaRepository,
@@ -133,6 +134,33 @@ class MongaViewModel(
     fun addMemory(text: String) = viewModelScope.launch { if (text.isNotBlank()) repository.addCoreMemory(text) }
     fun updateMemory(memory: CoreMemory, text: String) = viewModelScope.launch { if (text.isNotBlank()) repository.updateCoreMemory(memory, text) }
     fun deleteMemory(memory: CoreMemory) = viewModelScope.launch { repository.deleteCoreMemory(memory) }
+
+    fun addEpisodicMemory(
+        title: String,
+        content: String,
+    ) = viewModelScope.launch {
+        val trimmedTitle = title.trim()
+        val trimmedContent = content.trim()
+
+        if (trimmedTitle.isEmpty() || trimmedContent.isEmpty()) {
+            return@launch
+        }
+
+        val date = selectedDate.value
+        val occurredAt =
+            if (date == LocalDate.now()) {
+                System.currentTimeMillis()
+            } else {
+                date.epochRange().start
+            }
+
+        repository.addEpisodicMemory(
+            title = trimmedTitle,
+            content = trimmedContent,
+            occurredAt = occurredAt,
+        )
+    }
+
     fun changeDate(days: Long) { selectedDate.value = selectedDate.value.plusDays(days) }
     fun export(context: Context, uri: Uri) = runCatchingTask("백업을 저장했습니다.") { repository.export(context, uri) }
     fun restore(uri: Uri) = runCatchingTask("백업을 복원했습니다.") { repository.restore(uri) }
