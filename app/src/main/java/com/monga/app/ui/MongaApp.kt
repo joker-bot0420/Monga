@@ -133,6 +133,8 @@ fun MongaApp(vm: MongaViewModel) {
     val messages by vm.datedMessages.collectAsStateWithLifecycle()
     val summaries by vm.dailySummaries.collectAsStateWithLifecycle()
     val episodes by vm.datedEpisodicMemories.collectAsStateWithLifecycle()
+    var episodeTitle by remember(date) { mutableStateOf("") }
+    var episodeContent by remember(date) { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Memory History", style = MaterialTheme.typography.headlineSmall)
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -141,6 +143,37 @@ fun MongaApp(vm: MongaViewModel) {
             Modifier.padding(16.dp)
         ); Button({ vm.changeDate(1) }) { Text("다음") }
         }
+
+        OutlinedTextField(
+            value = episodeTitle,
+            onValueChange = { episodeTitle = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("에피소드 제목") },
+            singleLine = true,
+        )
+
+        OutlinedTextField(
+            value = episodeContent,
+            onValueChange = { episodeContent = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("내용") },
+            minLines = 3,
+        )
+
+        Button(
+            onClick = {
+                vm.addEpisodicMemory(
+                    title = episodeTitle,
+                    content = episodeContent,
+                )
+                episodeTitle = ""
+                episodeContent = ""
+            },
+            enabled = episodeTitle.isNotBlank() && episodeContent.isNotBlank(),
+        ) {
+            Text("기억하기")
+        }
+
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
