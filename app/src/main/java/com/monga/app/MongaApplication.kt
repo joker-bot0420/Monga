@@ -14,6 +14,7 @@ import com.monga.app.chat.DefaultSystemPromptProvider
 import com.monga.app.chat.DefaultCoreMemoryProvider
 import com.monga.app.inference.InferenceRole
 import com.monga.app.inference.LlamaNativeBridge
+import com.monga.app.chat.DefaultPersonaProvider
 
 class MongaApplication : Application() {
     val repository by lazy {
@@ -47,6 +48,7 @@ class MongaApplication : Application() {
             chatStore = repository,
             inferenceEngine = inferenceEngine,
             systemPromptProvider = DefaultSystemPromptProvider(
+                personaProvider = DefaultPersonaProvider(),
                 coreMemoryProvider = DefaultCoreMemoryProvider(
                     coreMemories = repository.coreMemories,
                     tokenCounter = { text ->
