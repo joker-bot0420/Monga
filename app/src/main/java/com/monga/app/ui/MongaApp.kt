@@ -132,11 +132,67 @@ fun MongaApp(vm: MongaViewModel) {
     val date by vm.selectedDate.collectAsStateWithLifecycle()
     val messages by vm.datedMessages.collectAsStateWithLifecycle()
     val summaries by vm.dailySummaries.collectAsStateWithLifecycle()
-    val episodes by vm.episodicMemories.collectAsStateWithLifecycle()
+    val episodes by vm.datedEpisodicMemories.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Memory History", style = MaterialTheme.typography.headlineSmall)
-        Row(verticalAlignment = Alignment.CenterVertically) { Button({ vm.changeDate(-1) }) { Text("이전") }; Text(date.format(DateTimeFormatter.ISO_DATE), Modifier.padding(16.dp)); Button({ vm.changeDate(1) }) { Text("다음") } }
-        LazyColumn { item { Text("이날의 대화 (${messages.size})", fontWeight = FontWeight.Bold) }; items(messages, key = { "m${it.id}" }) { MessageCard(it) }; item { Text("일일 요약 (${summaries.size}) · 에피소드 기억 (${episodes.size})", Modifier.padding(top = 16.dp), fontWeight = FontWeight.Bold) } }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Button({ vm.changeDate(-1) }) { Text("이전") }; Text(
+            date.format(DateTimeFormatter.ISO_DATE),
+            Modifier.padding(16.dp)
+        ); Button({ vm.changeDate(1) }) { Text("다음") }
+        }
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item {
+                Text(
+                    "이날의 대화 (${messages.size})",
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+
+            items(
+                messages,
+                key = { "m${it.id}" },
+            ) {
+                MessageCard(it)
+            }
+
+            item {
+                Text(
+                    "에피소드 기억 (${episodes.size})",
+                    Modifier.padding(top = 16.dp),
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+
+            items(
+                episodes,
+                key = { "e${it.id}" },
+            ) { episode ->
+                Card(
+                    Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        Modifier.padding(12.dp),
+                    ) {
+                        Text(
+                            episode.title,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(episode.content)
+                    }
+                }
+            }
+
+            item {
+                Text(
+                    "일일 요약 (전체 ${summaries.size})",
+                    Modifier.padding(top = 16.dp),
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
     }
 }
 

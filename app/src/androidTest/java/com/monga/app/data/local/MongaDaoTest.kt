@@ -66,4 +66,55 @@ class MongaDaoTest {
         assertEquals("newer", memories[0].title)
         assertEquals("older", memories[1].title)
     }
+
+    @Test
+    fun episodicMemoriesByDateUseStartInclusiveEndExclusiveAndNewestFirst() =
+        runBlocking {
+            dao.insertEpisodicMemory(
+                EpisodicMemory(
+                    title = "before",
+                    content = "before range",
+                    occurredAt = 999L,
+                    createdAt = 1L,
+                )
+            )
+
+            dao.insertEpisodicMemory(
+                EpisodicMemory(
+                    title = "start",
+                    content = "start boundary",
+                    occurredAt = 1000L,
+                    createdAt = 2L,
+                )
+            )
+
+            dao.insertEpisodicMemory(
+                EpisodicMemory(
+                    title = "inside",
+                    content = "inside range",
+                    occurredAt = 1999L,
+                    createdAt = 3L,
+                )
+            )
+
+            dao.insertEpisodicMemory(
+                EpisodicMemory(
+                    title = "end",
+                    content = "end boundary",
+                    occurredAt = 2000L,
+                    createdAt = 4L,
+                )
+            )
+
+            val memories =
+                dao.observeEpisodicMemoriesByDate(
+                    start = 1000L,
+                    end = 2000L,
+                ).first()
+
+            assertEquals(2, memories.size)
+            assertEquals("inside", memories[0].title)
+            assertEquals("start", memories[1].title)
+        }
+
 }
