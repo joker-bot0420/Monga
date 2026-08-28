@@ -34,6 +34,14 @@ class MongaViewModel(
     val datedMessages = selectedDate.flatMapLatest(repository::messages)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val datedEpisodicMemories =
+        selectedDate.flatMapLatest(repository::episodicMemories)
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                emptyList(),
+            )
+
     val notice = MutableStateFlow<String?>(null)
 
     private val _streamingDraft = MutableStateFlow("")

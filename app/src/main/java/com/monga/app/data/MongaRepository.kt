@@ -22,6 +22,16 @@ class MongaRepository(
     fun messages(conversationId: Long): Flow<List<Message>> = dao.observeMessages(conversationId)
     fun messages(date: LocalDate): Flow<List<Message>> = date.epochRange().let { dao.observeMessagesByDate(it.start, it.endExclusive) }
 
+    fun episodicMemories(
+        date: LocalDate,
+    ): Flow<List<EpisodicMemory>> =
+        date.epochRange().let {
+            dao.observeEpisodicMemoriesByDate(
+                start = it.start,
+                end = it.endExclusive,
+            )
+        }
+
     suspend fun createConversation(): Long {
         val now = System.currentTimeMillis()
         return dao.insertConversation(Conversation(title = "새 대화", createdAt = now, updatedAt = now))

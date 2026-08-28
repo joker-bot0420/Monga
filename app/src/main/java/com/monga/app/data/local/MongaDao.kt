@@ -20,6 +20,19 @@ interface MongaDao {
 
     @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
     fun observeConversations(): Flow<List<Conversation>>
+
+    @Query(
+        """
+    SELECT * FROM episodic_memories
+    WHERE occurredAt >= :start AND occurredAt < :end
+    ORDER BY occurredAt DESC, id DESC
+    """
+    )
+    fun observeEpisodicMemoriesByDate(
+        start: Long,
+        end: Long,
+    ): Flow<List<EpisodicMemory>>
+
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt, id")
     fun observeMessages(conversationId: Long): Flow<List<Message>>
 
