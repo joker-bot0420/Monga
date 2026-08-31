@@ -3,8 +3,9 @@
 #include <mutex>
 #include <string>
 #include <vector>
-
 #include "llama.h"
+#include <fstream>
+#include <unistd.h>
 
 namespace {
 
@@ -17,8 +18,23 @@ llama_sampler *g_sampler = nullptr;
 
 std::atomic<bool> g_cancelRequested{false};
 
-int g_generatedTokens = 0;
-int g_maxTokens = 0;
+    int g_generatedTokens = 0;
+    int g_maxTokens = 0;
+    int g_lastGeneratedTokenCount = 0;
+
+    int64_t g_lastPromptPrefillUs = 0;
+    int64_t g_lastDecodeUs = 0;
+
+    int g_lastDecodedTokenCount = 0;
+
+    enum GenerationEndReason {
+        GENERATION_END_NONE = 0,
+        GENERATION_END_EOG = 1,
+        GENERATION_END_MAX_TOKENS = 2,
+        GENERATION_END_CANCELLED = 3,
+    };
+
+    int g_lastGenerationEndReason = GENERATION_END_NONE;
 
 void ensureBackendInitialized() {
   std::call_once(g_backendInitFlag, []() { llama_backend_init(); });
@@ -49,10 +65,17 @@ void throwIllegalState(JNIEnv *env, const char *message) {
   }
 }
 
-bool startGenerationFromFormattedPromptLocked(
-    const std::string &formattedPrompt, int maxTokens) {
+    bool startGenerationFromFormattedPromptLocked(
+            const std::string &formattedPrompt, int maxTokens) {
 
-  const llama_vocab *vocab = llama_model_get_vocab(g_model);
+        g_lastGenerationEndReason = GENERATION_END_NONE;
+
+        g_lastGeneratedTokenCount = 0;
+        g_lastPromptPrefillUs = 0;
+        g_lastDecodeUs = 0;
+        g_lastDecodedTokenCount = 0;
+
+        const llama_vocab *vocab = llama_model_get_vocab(g_model);
 
   const int tokenCount =
       -llama_tokenize(vocab, formattedPrompt.c_str(), formattedPrompt.size(),
@@ -105,12 +128,17 @@ bool startGenerationFromFormattedPromptLocked(
 
   llama_sampler_chain_add(g_sampler, llama_sampler_init_greedy());
 
-  llama_batch batch = llama_batch_get_one(promptTokens.data(), tokenized);
+        llama_batch batch = llama_batch_get_one(promptTokens.data(), tokenized);
 
-  if (llama_decode(g_context, batch) != 0) {
-    clearGenerationLocked();
-    return false;
-  }
+        const int64_t prefillStartUs = llama_time_us();
+
+        if (llama_decode(g_context, batch) != 0) {
+            clearGenerationLocked();
+            return false;
+        }
+
+        g_lastPromptPrefillUs =
+                llama_time_us() - prefillStartUs;
 
   g_generatedTokens = 0;
   g_maxTokens = maxTokens;
@@ -533,13 +561,15 @@ Java_com_monga_app_inference_LlamaNativeBridge_nativeNextToken(JNIEnv *env,
     return nullptr;
   }
 
-  if (g_cancelRequested.load()) {
-    return nullptr;
-  }
+    if (g_cancelRequested.load()) {
+        g_lastGenerationEndReason = GENERATION_END_CANCELLED;
+        return nullptr;
+    }
 
-  if (g_generatedTokens >= g_maxTokens) {
-    return nullptr;
-  }
+    if (g_generatedTokens >= g_maxTokens) {
+        g_lastGenerationEndReason = GENERATION_END_MAX_TOKENS;
+        return nullptr;
+    }
 
   const llama_vocab *vocab = llama_model_get_vocab(g_model);
 
@@ -550,9 +580,10 @@ Java_com_monga_app_inference_LlamaNativeBridge_nativeNextToken(JNIEnv *env,
     return nullptr;
   }
 
-  if (llama_vocab_is_eog(vocab, newToken)) {
-    return nullptr;
-  }
+    if (llama_vocab_is_eog(vocab, newToken)) {
+        g_lastGenerationEndReason = GENERATION_END_EOG;
+        return nullptr;
+    }
 
   std::vector<char> pieceBuffer(128);
 
@@ -577,20 +608,28 @@ Java_com_monga_app_inference_LlamaNativeBridge_nativeNextToken(JNIEnv *env,
   }
 
   g_generatedTokens++;
+    g_lastGeneratedTokenCount = g_generatedTokens;
 
-  if (g_generatedTokens < g_maxTokens) {
-    llama_token tokenToDecode = newToken;
+    if (g_generatedTokens < g_maxTokens) {
+        llama_token tokenToDecode = newToken;
 
-    llama_batch batch = llama_batch_get_one(&tokenToDecode, 1);
+        llama_batch batch = llama_batch_get_one(&tokenToDecode, 1);
 
-    if (llama_decode(g_context, batch) != 0) {
-      clearGenerationLocked();
+        const int64_t decodeStartUs = llama_time_us();
 
-      throwIllegalState(env, "Failed to decode generated token.");
+        if (llama_decode(g_context, batch) != 0) {
+            clearGenerationLocked();
 
-      return nullptr;
+            throwIllegalState(env, "Failed to decode generated token.");
+
+            return nullptr;
+        }
+
+        g_lastDecodeUs +=
+                llama_time_us() - decodeStartUs;
+
+        g_lastDecodedTokenCount++;
     }
-  }
 
   jbyteArray result = env->NewByteArray(static_cast<jsize>(pieceLength));
 
@@ -612,6 +651,69 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_monga_app_inference_LlamaNativeBridge_nativeCancelGeneration(JNIEnv *,
                                                                       jobject) {
   g_cancelRequested.store(true);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeLastGeneratedTokenCount(
+        JNIEnv *, jobject) {
+    std::lock_guard<std::mutex> lock(g_modelMutex);
+
+    return static_cast<jint>(g_lastGeneratedTokenCount);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeLastPromptPrefillUs(
+        JNIEnv *, jobject) {
+    std::lock_guard<std::mutex> lock(g_modelMutex);
+
+    return static_cast<jlong>(g_lastPromptPrefillUs);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeLastDecodeUs(
+        JNIEnv *, jobject) {
+    std::lock_guard<std::mutex> lock(g_modelMutex);
+
+    return static_cast<jlong>(g_lastDecodeUs);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeLastDecodedTokenCount(
+        JNIEnv *, jobject) {
+    std::lock_guard<std::mutex> lock(g_modelMutex);
+
+    return static_cast<jint>(g_lastDecodedTokenCount);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeLastGenerationEndReason(
+        JNIEnv *, jobject) {
+    std::lock_guard<std::mutex> lock(g_modelMutex);
+
+    return static_cast<jint>(g_lastGenerationEndReason);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeCurrentRssKb(
+        JNIEnv *, jobject) {
+    std::ifstream statm("/proc/self/statm");
+
+    long totalPages = 0;
+    long residentPages = 0;
+
+    if (!(statm >> totalPages >> residentPages)) {
+        return -1;
+    }
+
+    const long pageSize = sysconf(_SC_PAGESIZE);
+
+    if (pageSize <= 0) {
+        return -1;
+    }
+
+    return static_cast<jlong>(
+            residentPages * pageSize / 1024
+    );
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -9,6 +9,14 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.util.concurrent.atomic.AtomicBoolean
 
+enum class GenerationEndReason {
+    NONE,
+    EOG,
+    MAX_TOKENS,
+    CANCELLED,
+    UNKNOWN,
+}
+
 class LlamaInferenceEngine(
     private val maxTokens: Int = 64,
     private val contextBudgetTokens: Int = 4096,
@@ -247,6 +255,30 @@ class LlamaInferenceEngine(
             }
         }
     }.flowOn(Dispatchers.Default)
+
+    fun lastGenerationEndReason(): GenerationEndReason =
+        when (LlamaNativeBridge.nativeLastGenerationEndReason()) {
+            0 -> GenerationEndReason.NONE
+            1 -> GenerationEndReason.EOG
+            2 -> GenerationEndReason.MAX_TOKENS
+            3 -> GenerationEndReason.CANCELLED
+            else -> GenerationEndReason.UNKNOWN
+        }
+
+    fun lastGeneratedTokenCount(): Int =
+        LlamaNativeBridge.nativeLastGeneratedTokenCount()
+
+    fun lastPromptPrefillUs(): Long =
+        LlamaNativeBridge.nativeLastPromptPrefillUs()
+
+    fun lastDecodeUs(): Long =
+        LlamaNativeBridge.nativeLastDecodeUs()
+
+    fun lastDecodedTokenCount(): Int =
+        LlamaNativeBridge.nativeLastDecodedTokenCount()
+
+    fun currentRssKb(): Long =
+        LlamaNativeBridge.nativeCurrentRssKb()
 
     override fun cancel() {
         cancelled.set(true)
