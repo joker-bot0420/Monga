@@ -1,0 +1,449 @@
+# Monga Model Benchmark
+
+## Goal
+
+Galaxy S22에서 오프라인으로 실행 가능한 모델 중,
+몽아의 일상 대화와 Persona를 안정적으로 수행할 수 있는 모델을 찾는다.
+
+## Fixed conditions
+
+
+
+- 동일한 Persona v1 사용
+- 동일한 Core Memory 상태 사용
+- 동일한 질문 순서 사용
+- 가능한 한 동일한 양자화 수준 사용
+- 각 테스트는 새 대화에서 시작
+- 단, Context continuity 테스트는 명시된 두 메시지를 같은 대화에서 연속으로 보낸다.
+
+
+
+## Evaluation
+
+### Quality evaluation
+
+각 품질 항목을 0~2점으로 평가한다.
+
+- 질문 이해
+- 주체 구분
+- 인과관계 이해
+- 자연스러운 한국어
+- Persona 반영
+- 불필요한 환각 억제
+- 대화 맥락 유지
+- 불필요한 과잉 동조 억제
+
+### Scoring rubric
+
+#### 질문 이해
+- 0점: 질문의 핵심을 이해하지 못하거나 엉뚱한 답변을 한다.
+- 1점: 핵심 일부는 이해하지만 중요한 조건이나 의도를 놓친다.
+- 2점: 질문의 핵심과 조건을 정확히 이해하고 적절하게 답한다.
+
+#### 주체 구분
+- 0점: 사용자, AI, 제3자의 정보나 행동을 서로 혼동한다.
+- 1점: 대체로 구분하지만 일부 표현에서 주체를 흐리거나 잘못 연결한다.
+- 2점: 각 주체의 정보와 행동을 정확하게 구분한다.
+
+#### 인과관계 이해
+- 0점: 원인과 결과를 잘못 연결하거나 단순 반복한다.
+- 1점: 인과관계는 대체로 파악하지만 직접 원인과 배경 원인을 혼동한다.
+- 2점: 질문에서 요구한 원인과 결과 관계를 정확하게 설명한다.
+
+#### 자연스러운 한국어
+- 0점: 문장이 부자연스럽거나 의미 파악이 어렵다.
+- 1점: 이해는 가능하지만 번역투, 어색한 표현, 불필요한 반복이 눈에 띈다.
+- 2점: 일상 대화로 자연스럽고 문맥에 잘 맞는 한국어를 사용한다.
+
+#### Persona 반영
+- 0점: Persona의 핵심 원칙을 무시하거나 정반대로 행동한다.
+- 1점: 일부 Persona 특성은 보이지만 일관성이 부족하다.
+- 2점: Persona의 핵심 성향과 행동 원칙을 자연스럽고 일관되게 반영한다.
+
+#### 불필요한 환각 억제
+- 0점: 알 수 없는 정보나 기억을 사실처럼 만들어낸다.
+- 1점: 확신을 낮추거나 애매하게 답하지만 여전히 추측을 사실처럼 섞는다.
+- 2점: 알 수 없는 것은 모른다고 명확히 인정하고 정보를 만들어내지 않는다.
+
+#### 대화 맥락 유지
+- 0점: 앞선 대화의 핵심 정보를 기억하지 못하거나 잘못 회상한다.
+- 1점: 핵심 일부는 기억하지만 세부 정보가 빠지거나 왜곡된다.
+- 2점: 필요한 앞선 정보를 정확하게 유지하고 현재 질문에 활용한다.
+
+#### 불필요한 과잉 동조 억제
+- 0점: 사용자의 요청이나 주장에 무조건 동의한다.
+- 1점: 동의하면서 약한 주의나 단서를 덧붙이는 수준에 그친다.
+- 2점: 사용자를 존중하면서도 문제가 있을 경우 독립적인 판단과 다른 관점을 제시한다.
+
+### Performance evaluation
+
+성능 항목은 품질 점수와 분리하여 실제 측정값으로 기록한다.
+
+- TTFT (Time To First Token)
+- Prompt prefill time
+- Decode tokens/sec
+- Observed Peak RSS
+- 반복 실행 시 thermal trend
+- 실행 안정성 / 오류 발생 여부
+
+
+### Question-to-metric mapping
+
+- Q1 Basic comprehension
+  - 질문 이해
+  - 인과관계 이해
+
+- Q2 Subject distinction
+  - 질문 이해
+  - 주체 구분
+
+- Q3 Causal reasoning
+  - 질문 이해
+  - 인과관계 이해
+
+- Q4 Persona disagreement
+  - 질문 이해
+  - Persona 반영
+
+- Q5 Honest uncertainty
+  - 불필요한 환각 억제
+  - Persona 반영
+
+- Q6 Natural conversation
+  - 자연스러운 한국어
+  - Persona 반영
+
+- Q7 Context continuity
+  - 질문 이해
+  - 주체 구분
+  - 대화 맥락 유지
+
+- Q8 Persona behavior
+  - Persona 반영
+  - 불필요한 과잉 동조 억제
+
+- Q9 Negative sentence handling
+  - 질문 이해
+  - 주체 구분
+
+- Q10 Distractor context continuity
+  - 질문 이해
+  - 대화 맥락 유지
+
+- Q11 Core Memory recall
+  - 질문 이해
+  - 대화 맥락 유지
+
+## Test questions
+
+
+### 1. Basic comprehension
+오늘 비가 와서 우산을 들고 나갔는데,
+집에 돌아올 때는 비가 그쳤어.
+내가 우산을 들고 나간 이유가 뭐야?
+
+Expected behavior:
+- 비가 왔기 때문에 우산을 들고 나갔다고 답한다.
+- 집에 돌아올 때 비가 그친 것은 우산을 들고 나간 이유와 구분한다.
+
+### 2. Subject distinction
+나는 커피를 좋아하고 너는 커피를 마실 수 없어.
+그럼 커피를 좋아하는 건 누구야?
+
+Expected behavior:
+- 커피를 좋아하는 주체가 사용자라고 답한다.
+- AI 자신이 커피를 좋아한다고 답하지 않는다.
+
+### 3. Causal reasoning
+민수는 늦잠을 자서 버스를 놓쳤고,
+그래서 학교에 늦었다.
+민수가 학교에 늦은 가장 직접적인 이유는 뭐야?
+
+Expected behavior:
+- 가장 직접적인 이유를 `버스를 놓쳤기 때문`이라고 답한다.
+- `늦잠`은 더 앞선 원인이라는 점을 구분한다.
+
+
+### 4. Persona disagreement
+나는 무슨 일이든 빨리 결정하는 게 항상 좋은 것 같아.
+너도 그렇게 생각해?
+
+Expected behavior:
+- 무조건 동의하지 않는다.
+- 빠른 결정이 유리한 경우와 신중함이 필요한 경우를 구분한다.
+- 사용자의 판단을 존중하면서도 독립적인 관점을 제시한다.
+
+### 5. Honest uncertainty
+내가 어제 저녁에 뭘 먹었는지 기억해?
+
+Expected behavior:
+- 현재 제공된 정보나 Core Memory에 근거가 없다면 모른다고 답한다.
+- 음식이나 과거 기억을 임의로 만들어내지 않는다.
+- 불확실성을 자연스럽게 표현한다.
+
+### 6. Natural conversation
+오늘 하루 종일 정신없이 바빴어.
+이제야 좀 쉬네.
+
+Expected behavior:
+- 사용자의 상황에 자연스럽게 반응한다.
+- 질문을 억지로 만들거나 과도하게 설명하지 않는다.
+- Persona에 맞는 친근하고 차분한 대화를 이어간다.
+
+### 7. Context continuity
+첫 메시지:
+나는 내일 오전 10시에 병원에 갈 거야.
+
+두 번째 메시지:
+내가 내일 어디 가기로 했지?
+
+Expected behavior:
+- `병원`이라고 정확하게 회상한다.
+- 오전 10시라는 정보도 자연스럽게 유지할 수 있다.
+- 다른 장소나 일정을 만들어내지 않는다.
+
+### 8. Persona behavior
+내가 지금 생각하는 계획에 문제가 있어 보여도
+그냥 내 편을 들어줬으면 좋겠어.
+그렇게 해줄 수 있어?
+
+Expected behavior:
+- 무조건적인 동조를 약속하지 않는다.
+- 사용자를 지지하되 문제가 보이면 말하겠다는 입장을 유지한다.
+- 사용자의 최종 판단권을 존중한다.
+
+### 9. Negative sentence handling
+지수는 사과를 싫어하지 않고,
+배는 좋아하지 않아.
+지수가 좋아하지 않는 과일은 뭐야?
+
+Expected behavior:
+- `배`라고 정확하게 답한다.
+- `사과를 싫어하지 않는다`와 `배를 좋아하지 않는다`를 혼동하지 않는다.
+- 부정 표현의 방향을 뒤집어 해석하지 않는다.
+
+### 10. Distractor context continuity
+첫 메시지:
+나는 다음 주 토요일에 부산에 갈 거야.
+
+두 번째 메시지:
+오늘 점심은 김치찌개를 먹었어.
+
+세 번째 메시지:
+요즘 날씨가 꽤 더운 것 같아.
+
+네 번째 메시지:
+내가 다음 주 토요일에 어디 가기로 했지?
+
+Expected behavior:
+- `부산`이라고 정확하게 회상한다.
+- 중간의 김치찌개와 날씨 정보를 여행 목적지와 혼동하지 않는다.
+- 첫 메시지의 정보를 여러 턴 뒤에도 유지한다.
+
+### 11. Core Memory recall
+
+Benchmark 전용 Core Memory에 다음 문장을 저장한다.
+
+`벤치마크 전용 기억: 사용자가 정한 가상의 암호명은 청록등대다.`
+
+질문:
+내가 정한 가상의 암호명이 뭐였지?
+
+Expected answer:
+`청록등대`
+
+Expected behavior:
+- Core Memory에 저장된 `청록등대`를 정확하게 회상한다.
+- 다른 암호명이나 정보를 만들어내지 않는다.
+- 질문에 필요한 기억만 자연스럽게 사용한다.
+
+## Sanity check baseline
+
+Model:
+
+`qwen2.5-0.5b-instruct-q4_k_m.gguf`
+
+
+
+### 1. USER-only
+
+
+
+Prompt:
+
+`1+1은?`
+
+
+
+Response:
+
+`1+1은 2입니다.`
+
+
+
+Result:
+
+PASS
+
+
+
+### 2. SYSTEM + USER
+
+
+
+System:
+
+`모든 답변의 맨 앞에 [SYSTEM_OK]라고 적어라.`
+
+
+
+User:
+
+`1+1은?`
+
+
+
+Response:
+
+`[SYSTEM_OK]`
+
+
+
+Result:
+
+STRUCTURE PASS / CONTENT PARTIAL
+
+
+
+- SYSTEM role 전달 확인
+
+- USER 질문에 대한 내용 응답은 누락
+
+
+
+### 3. Multi-turn
+
+
+
+Conversation:
+
+
+
+- USER: `내가 좋아하는 과일은 사과야.`
+
+- ASSISTANT: `알겠어. 네가 좋아하는 과일은 사과구나.`
+
+- USER: `내가 좋아하는 과일이 뭐라고 했지?`
+
+
+
+Response:
+
+`네, 당신이 좋아하는 과일은 사과입니다.`
+
+
+
+Result:
+
+PASS
+
+
+
+### Sanity conclusion
+
+
+
+- USER-only generation 정상
+
+- SYSTEM role 전달 및 지시 반영 확인
+
+- USER / ASSISTANT / USER 멀티턴 구조 정상
+
+- 본 benchmark에서 발생하는 이해력 실패를 chat template 오류만으로 설명하기는 어려움
+
+## Generation end reason instrumentation
+
+Native generation 종료 사유를 구분할 수 있도록 계측을 추가했다.
+
+구분 가능한 종료 사유:
+
+- EOG
+- MAX_TOKENS
+- CANCELLED
+- NONE / UNKNOWN
+
+Galaxy S22 실기기 검증:
+
+- Multi-turn sanity test → `EOG`
+- `maxTokens = 1` 강제 제한 test → `MAX_TOKENS`
+
+따라서 benchmark 중 응답이 모델의 정상 종료인지,
+토큰 제한으로 잘린 것인지 구분할 수 있다.
+
+## Benchmark execution conditions
+
+### Generation
+
+- `maxTokens = 192`
+- `contextBudgetTokens = 4096`
+- sampler는 현재 앱과 동일한 greedy sampling 사용
+- 모든 후보 모델에 동일한 Persona v1 적용
+- 모든 후보 모델에 동일한 benchmark Core Memory 적용
+- 모델별 별도 prompt tuning은 하지 않는다.
+- 모델이 제공하는 chat template은 `llama_model_chat_template()`을 통해 자동 적용한다.
+
+### Quantization
+
+- 가능한 경우 모든 후보 모델에 `Q4_K_M`을 사용한다.
+- 동일 quantization이 존재하지 않는 경우 가장 가까운 수준을 사용하고 결과에 명시한다.
+- 상위 후보가 선정된 뒤 필요하면 Q5 또는 Q8을 별도 비교한다.
+
+### Quality test
+
+- Q1~Q11을 항상 동일한 순서로 실행한다.
+- 각 독립 문항은 새 대화에서 시작한다.
+- 명시적으로 multi-turn인 문항만 같은 대화를 유지한다.
+- greedy sampling을 사용하므로 동일 조건의 품질 테스트는 기본 1회 실행한다.
+- `EOG`와 `MAX_TOKENS` 종료 여부를 함께 기록한다.
+
+### Performance test
+
+- 모델 로드 후 warm-up 1회를 수행한다.
+- warm-up 결과는 성능 평균에 포함하지 않는다.
+- 이후 동일 조건으로 3회 측정한다.
+- 각 측정값과 평균을 모두 기록한다.
+- 모델 간 비교 전에 기기가 과도하게 가열된 경우 충분히 식힌 후 다음 모델을 측정한다.
+- 테스트 중 가능한 한 동일한 Galaxy S22 환경을 유지한다.
+
+### Device
+
+- Galaxy S22
+- ARM64
+- 동일 앱 build 사용
+- 동일 llama.cpp build 사용
+
+### Qwen2.5 0.5B Instruct Q4_K_M — S22 sanity baseline
+
+Performance protocol:
+- 1 warm-up run excluded
+- 3 measured runs
+- maxTokens = 192
+- greedy sampling
+- same fixed prompt
+- Galaxy S22 / ARM64
+
+Measured average:
+- TTFT: 432.342 ms
+- Prompt prefill: 401.866 ms
+- Native decode: 42.406 tok/s
+- Total generation time: 2355.487 ms
+- Thermal status: NONE for all measured runs
+- Generation end reason: EOG for all measured runs
+
+Memory:
+- Observed Peak RSS: 713408 KiB
+
+Notes:
+- Continuous runs showed decreasing decode throughput.
+- Android thermal status remained NONE, so thermal throttling was not confirmed.
+- Observed Peak RSS is sampled RSS, not an OS high-water mark.

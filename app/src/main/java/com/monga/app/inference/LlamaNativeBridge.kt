@@ -30,6 +30,13 @@ object LlamaNativeBridge {
     ): Boolean
 
     external fun nativeNextToken(): ByteArray?
+    external fun nativeLastGenerationEndReason(): Int
+    external fun nativeLastGeneratedTokenCount(): Int
+    external fun nativeLastPromptPrefillUs(): Long
+    external fun nativeLastDecodeUs(): Long
+    external fun nativeLastDecodedTokenCount(): Int
     external fun nativeCancelGeneration()
     external fun nativeFinishGeneration()
+    external fun nativeCurrentRssKb(): Long
+
 }
