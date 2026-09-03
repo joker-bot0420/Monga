@@ -447,3 +447,157 @@ Notes:
 - Continuous runs showed decreasing decode throughput.
 - Android thermal status remained NONE, so thermal throttling was not confirmed.
 - Observed Peak RSS is sampled RSS, not an OS high-water mark.
+
+### Qwen3 0.6B Q4_K_M — S22 candidate baseline
+
+Performance protocol:
+- 1 warm-up run excluded
+- 3 measured runs
+- maxTokens = 192
+- greedy sampling
+- non-thinking mode enabled with `/no_think`
+- leading `<think>...</think>` wrapper filtered from visible output
+- Galaxy S22 / ARM64
+
+Measured average:
+- Visible TTFT: 570.607 ms
+- Prompt prefill: 435.184 ms
+- Native decode: 39.724 tok/s
+- Total generation time: 1420.465 ms
+- Thermal status: NONE for all measured runs
+- Generation end reason: EOG for all measured runs
+
+Memory:
+- Observed Peak RSS: 736376 KiB
+
+Notes:
+- Continuous runs showed decreasing decode throughput.
+- Android thermal status remained NONE, so thermal throttling was not confirmed.
+- Observed Peak RSS is sampled RSS, not an OS high-water mark.
+- Total generation time is not directly comparable across models when generated token counts differ.
+
+## Candidate quality results
+
+### Q1~Q11 Core Memory ON summary
+
+The following totals are provisional manual evaluations using the current rubric. They are not automatically calculated scores.
+
+| Model | Quantization | Provisional score |
+| --- | --- | ---: |
+| Qwen2.5 0.5B Instruct | Q4_K_M | 9/22 |
+| Qwen3 0.6B | Q4_K_M | 9/22 |
+| Gemma 3 1B IT | Q4_K_M | 11/22 |
+
+### Core Memory OFF diagnostics
+
+These runs isolate the effect of removing the benchmark Core Memory while retaining the Persona and the rest of the system prompt.
+
+#### Qwen2.5 0.5B Instruct Q4_K_M
+
+- Irrelevant Core Memory contamination decreased.
+- Q5 honest uncertainty improved.
+- Fundamental issues with Persona behavior and natural conversation remained.
+
+#### Qwen3 0.6B Q4_K_M
+
+- Core Memory contamination disappeared.
+- Quality problems were still observed in Q1, Q2, Q3, Q4, Q5, Q6, Q8, and Q9.
+- Q7 and Q10 context recall remained intact.
+
+#### Gemma 3 1B IT Q4_K_M
+
+- Core Memory contamination disappeared.
+- Q1 and Q2 partially improved.
+- Problems remained in Q3, Q4, and Q9.
+- Q7 and Q10 context recall remained intact.
+- Q11 was excluded from evaluation because Core Memory was disabled.
+
+### Current Core Memory conclusion
+
+- Irrelevant Core Memory was observed leaking into general questions across multiple models.
+- Always including all Core Memory in the system prompt is therefore likely to act as a distractor for small local models.
+- A retrieval or relevance-filtering structure that injects only relevant memory should be considered.
+- Removing Core Memory did not resolve every quality problem, so limitations in the models' own capabilities also remain a separate factor.
+
+## Qwen3 thinking-mode diagnostic
+
+This was a diagnostic run for the effect of `/no_think`, not a formal performance benchmark.
+
+Conditions:
+
+- Core Memory OFF
+- thinking ON; `/no_think` was not appended
+- `maxTokens = 512`
+- Persona and the rest of the system prompt retained
+
+Results:
+
+- Q1: 484 generated tokens, EOG, basic causal reasoning failed.
+- Q3: 456 generated tokens, EOG, causal/negative handling failed.
+- Q9: no visible response; the test ended with an assertion failure.
+
+Thinking mode did not meaningfully resolve the observed quality problems of Qwen3 0.6B in this diagnostic.
+
+## Gemma 3 1B IT Q4_K_M — S22 candidate baseline
+
+### Sanity
+
+- USER: PASS
+- SYSTEM: PASS
+- MULTI-TURN: PASS
+- Generation end reason: EOG PASS
+
+### Single-run performance
+
+- TTFT: 636.958438 ms
+- Prompt prefill: 587.257 ms
+- Native decode: 24.718305724931263 tok/s
+- Total generation time: 3561.410103 ms
+- Generation end reason: EOG
+- Generated tokens: 72
+
+### Memory
+
+- RSS before load: 96952 KiB
+- RSS after load: 942996 KiB
+- Observed Peak RSS: 955764 KiB
+- RSS after generation: 937392 KiB
+
+### Repeated performance
+
+Protocol:
+
+- 1 warm-up run excluded
+- 3 measured runs
+- `maxTokens = 192`
+- same fixed prompt
+- Galaxy S22 / ARM64
+
+Measured runs:
+
+| Run | Native decode | Thermal status |
+| --- | ---: | --- |
+| 1 | 22.998984530946892 tok/s | NONE → NONE |
+| 2 | 22.269620773102258 tok/s | NONE → NONE |
+| 3 | 21.40375326704512 tok/s | NONE → NONE |
+
+Measured average:
+
+- TTFT: 760.7531076666668 ms
+- Prompt prefill: 702.6203333333333 ms
+- Native decode: 22.22411952369809 tok/s
+- Total generation time: 4008.915745 ms
+
+Notes:
+
+- Decode throughput decreased across the continuous measured runs.
+- Thermal status remained NONE before and after every run, so thermal throttling was not confirmed.
+- Observed Peak RSS is sampled RSS, not an OS high-water mark.
+
+## Current candidate assessment
+
+- Qwen2.5 0.5B is fast and lightweight, but its Persona and Core Memory utilization are weak.
+- Qwen3 0.6B has strong memory recall, but irrelevant-memory over-reference and basic quality problems are substantial.
+- Gemma 3 1B has the highest provisional quality score of the three and relatively more natural conversation, but its speed and RAM costs increase substantially while the quality improvement remains limited.
+- Gemma remains a comparison candidate; it is not the confirmed final model.
+- Compare at least one larger candidate before making the final selection.
