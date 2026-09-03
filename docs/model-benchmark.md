@@ -487,6 +487,7 @@ The following totals are provisional manual evaluations using the current rubric
 | Qwen2.5 0.5B Instruct | Q4_K_M | 9/22 |
 | Qwen3 0.6B | Q4_K_M | 9/22 |
 | Gemma 3 1B IT | Q4_K_M | 11/22 |
+| Qwen3 1.7B | Q4_K_M | 10/22 |
 
 ### Core Memory OFF diagnostics
 
@@ -511,6 +512,17 @@ These runs isolate the effect of removing the benchmark Core Memory while retain
 - Problems remained in Q3, Q4, and Q9.
 - Q7 and Q10 context recall remained intact.
 - Q11 was excluded from evaluation because Core Memory was disabled.
+
+#### Qwen3 1.7B Q4_K_M
+
+- Q11 was excluded from evaluation because Core Memory was disabled.
+- `청록등대` contamination disappeared.
+- Q5 improved in that it acknowledged not remembering what the user ate yesterday.
+- However, the system-prompt wording `기억 문장을 그대로 반복하지 마라. 사용자 기억은 내부 참고 정보다.` leaked into the visible response.
+- Q8 repeated Persona/system instructions instead of applying them naturally.
+- Q7 recalled the hospital and 10 a.m. context, but added unsupported details about treatment and an afternoon schedule.
+- Problems remained in Q1 causal handling, Q3 direct-versus-upstream cause distinction, and Q9 negative-sentence handling.
+- Q10 Busan context recall remained intact.
 
 ### Current Core Memory conclusion
 
@@ -594,10 +606,111 @@ Notes:
 - Thermal status remained NONE before and after every run, so thermal throttling was not confirmed.
 - Observed Peak RSS is sampled RSS, not an OS high-water mark.
 
+## Qwen3 1.7B Q4_K_M — S22 candidate baseline
+
+Model file: `Qwen3-1.7B-Q4_K_M.gguf` (`1282439264` bytes)
+
+Conditions:
+
+- Q4_K_M
+- non-thinking mode enabled with `/no_think`, matching the Qwen3 0.6B baseline
+- Galaxy S22 / ARM64
+
+### Sanity
+
+- USER-only: PASS
+- SYSTEM+USER: PASS
+- MULTI-TURN: PASS; correctly recalled that the user's favorite fruit was `사과`.
+- No crash or OOM occurred.
+
+### Single-run performance
+
+- TTFT: 1517.234635 ms
+- Prompt prefill: 1206.119 ms
+- Native decoded tokens: 191
+- Native decode time: 13184675 µs
+- Native decode: 14.486515594809884 tok/s
+- Visible-window decode: 14.698827594729936 tok/s
+- Total generation time: 14511.468275 ms
+- Generated tokens: 192
+- Generation end reason: MAX_TOKENS
+- No crash or OOM occurred.
+
+### Memory
+
+- RSS before load: 103308 KiB (approximately 100.89 MiB)
+- RSS after load: 1412736 KiB (approximately 1379.63 MiB)
+- Observed Peak RSS: 1450980 KiB (approximately 1416.97 MiB)
+- RSS after generation: 1430484 KiB (approximately 1396.96 MiB)
+- Observed Peak RSS is sampled RSS, not an OS high-water mark.
+
+### Repeated performance
+
+Protocol:
+
+- 1 warm-up run excluded
+- 3 measured runs
+- `maxTokens = 192`
+- same fixed prompt
+- non-thinking mode enabled with `/no_think`
+
+Measured runs:
+
+| Run | TTFT | Prompt prefill | Native decode | Total generation time | Thermal status | End reason |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 | 1843.290103 ms | 1490.151 ms | 13.413981090500478 tok/s | 15845.237129 ms | NONE → NONE | MAX_TOKENS |
+| 2 | 1914.234843 ms | 1525.79 ms | 12.919476286368917 tok/s | 16432.252754 ms | NONE → NONE | MAX_TOKENS |
+| 3 | 1936.04427 ms | 1564.864 ms | 12.852887465097009 tok/s | 16540.057494 ms | NONE → NONE | MAX_TOKENS |
+
+Measured average:
+
+- TTFT: 1897.8564053333332 ms
+- Prompt prefill: 1526.9350000000002 ms
+- Native decode: 13.062114947322135 tok/s
+- Total generation time: 16272.515792333334 ms
+
+Notes:
+
+- Native decode changed from 13.413981090500478 tok/s in Run 1 to 12.852887465097009 tok/s in Run 3, approximately -4.18%.
+- Thermal status remained NONE before and after every measured run, so thermal throttling was not confirmed.
+
+### Quality result — Core Memory ON
+
+The provisional manual score under the current rubric is **10/22**. This is a manual interim evaluation, not an automatically calculated score.
+
+Key observations:
+
+- Q4 Persona disagreement was clearly improved over Qwen3 0.6B.
+- Q10 Busan context recall succeeded.
+- Q11 `청록등대` Core Memory recall succeeded.
+- Q1 causal interpretation failed and ended with MAX_TOKENS.
+- Q5 hallucinated unsupported `빵과 커피` and showed irrelevant Core Memory contamination.
+- `청록등대` also appeared unnecessarily in Q6, Q8, and Q9.
+- Q7 hospital context recall failed.
+- Q9 negative-sentence handling failed.
+- Q8 repeated system/Persona wording and ended with MAX_TOKENS.
+
+### Current Qwen3 1.7B assessment
+
+- Some Persona capability improved over Qwen3 0.6B, especially Q4 disagreement.
+- Provisional quality improved only from 9/22 to 10/22.
+- At the same time, repeated native decode averaged approximately 13.06 tok/s and sampled peak RSS reached approximately 1416.97 MiB (1.38 GiB).
+- Under the current prompt and benchmark conditions, the quality gain does not justify the additional speed and memory costs.
+- Qwen3 1.7B is therefore lowered in the current final-candidate priority.
+- This result does not establish an absolute limitation of the entire Qwen3 family.
+- Because system-prompt leakage and basic reasoning problems remained with Core Memory OFF, improving memory retrieval alone will not resolve every issue.
+
 ## Current candidate assessment
 
-- Qwen2.5 0.5B is fast and lightweight, but its Persona and Core Memory utilization are weak.
-- Qwen3 0.6B has strong memory recall, but irrelevant-memory over-reference and basic quality problems are substantial.
-- Gemma 3 1B has the highest provisional quality score of the three and relatively more natural conversation, but its speed and RAM costs increase substantially while the quality improvement remains limited.
-- Gemma remains a comparison candidate; it is not the confirmed final model.
-- Compare at least one larger candidate before making the final selection.
+Current provisional Core Memory ON scores are manual interim evaluations under the current rubric, not automatically calculated scores:
+
+- Qwen2.5 0.5B Instruct: 9/22
+- Qwen3 0.6B: 9/22
+- Gemma 3 1B IT: 11/22
+- Qwen3 1.7B: 10/22
+
+Current assessment:
+
+- Gemma 3 1B is currently the strongest comparison candidate for the quality, speed, and RAM tradeoff.
+- Qwen3 1.7B is heavier but did not surpass Gemma 3 1B in provisional quality.
+- The next comparison candidate is worth selecting from a model family other than Qwen.
