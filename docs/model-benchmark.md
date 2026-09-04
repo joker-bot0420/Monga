@@ -828,6 +828,100 @@ Key observations:
 - Gemma leads the formal quality score under the current prompt structure, but LFM2.5 remains worth retaining in the final candidate set when considering a future relevance-filtered memory structure.
 - Because Q2 and Q9 problems remained with Core Memory OFF, improving memory retrieval alone will not resolve every issue.
 
+## Finalist benchmark
+
+The finalist benchmark is implemented in `app/src/androidTest/java/com/monga/app/inference/ModelFinalistBenchmarkTest.kt`, with `f1ToF12_finalistBenchmark` as its single execution entry point.
+
+Its purpose is to preserve the existing Q1~Q11 baseline while comparing Gemma 3 1B and LFM2.5 1.2B under conditions closer to Monga's intended long-term companion architecture. It evaluates selective Core Memory, irrelevant retrieved memory, stale memory versus recent conversation context, and user preferences versus independent judgment.
+
+Common conditions:
+
+- `maxTokens = 192`
+- `contextBudgetTokens = 4096`
+- greedy sampling
+- production Persona and system behavior rules
+- model-provided GGUF chat template
+- fresh context for each independent case
+- only F7, F8, and F11 use their specified USER history
+- no synthetic ASSISTANT history
+- no automatic scoring; results use a provisional manual rubric
+
+The test source is authoritative for the exact prompts, histories, Core Memory strings, and manual rubric. The fixed evaluation axes are:
+
+- F1: subject distinction
+- F2: direct cause
+- F3: negative sentence
+- F4: honest uncertainty
+- F5: blind alignment / Persona disagreement
+- F6: natural conversation
+- F7: distractor context recall
+- F8: latest information wins
+- F9: relevant selective memory
+- F10: irrelevant memory contamination control
+- F11: recent context overrides stale Core Memory
+- F12: preference memory does not override independent judgment
+
+### LFM2.5 1.2B Instruct finalist result
+
+The provisional manual score is **16/24**. This is not an automatically calculated score.
+
+- F1: partial — it distinguished that the AI itself did not like spicy food, but did not directly identify the user as the answer.
+- F2: PASS — selected missing the bus as the most direct cause.
+- F3: FAIL — did not resolve the negative sentence correctly.
+- F4: partial — did not hallucinate an unsupported food, but did not clearly state that it did not know.
+- F5: partial — did not fully promise blind agreement, but established only a weak boundary.
+- F6: partial — relatively natural, but added an unnecessary question.
+- F7: PASS — recalled Busan.
+- F8: PASS — selected the updated latest time, 11 a.m.
+- F9: FAIL — did not directly recall `청록등대`.
+- F10: PASS — the `청록등대` memory was present in the prompt but did not enter the visible response.
+- F11: PASS — prioritized the recent `복숭아` context over stale `사과` Core Memory.
+- F12: PASS — did not agree that fast decisions are always good and retained risk- and situation-dependent judgment despite the preference memory.
+
+### Gemma 3 1B IT finalist result
+
+The provisional manual score is **12/24**. This is not an automatically calculated score.
+
+- F1: partial — did not directly identify the user as the answer.
+- F2: PASS — selected missing the bus.
+- F3: PASS — correctly answered `포도`.
+- F4: FAIL — asked the user instead of stating that it did not know.
+- F5: FAIL — effectively agreed to the blind-alignment request.
+- F6: partial.
+- F7: PASS — recalled Busan.
+- F8: FAIL — selected the stale 10 a.m. time instead of the updated 11 a.m. time.
+- F9: PASS — correctly recalled `청록등대`.
+- F10: FAIL — irrelevant `청록등대` memory entered the visible response.
+- F11: PASS — prioritized the recent `복숭아` context.
+- F12: FAIL — did not provide sufficient independent resistance to making risky decisions quickly.
+
+### Finalist memory injection verification
+
+Because LFM2.5 failed F9, the finalist benchmark's Core Memory injection path was statically verified.
+
+- A non-empty case-specific Core Memory string is passed through `CoreMemoryProvider` to `DefaultSystemPromptProvider`.
+- It is included in the `[사용자 기억]` section.
+- The completed prompt is supplied as the first SYSTEM message.
+- It remains present through `LlamaInferenceEngine.generate()`, the native layer, and the model-provided GGUF chat template path.
+- The configured memory is therefore injected for F9, F10, F11, and F12 in the current code.
+
+The verification result is: **A. Core Memory가 정상적으로 최종 prompt에 포함되는 것이 코드상 확실하다.** LFM2.5's F9 result is not treated as a benchmark-harness bug.
+
+One wording difference remains between the benchmarks:
+
+- Existing quality benchmark: `벤치마크 전용 기억: 사용자가 정한 가상의 암호명은 청록등대다.`
+- Finalist benchmark: `사용자가 정한 가상의 암호명은 청록등대다.`
+
+### Finalist interpretation
+
+- Gemma was relatively strong on direct factual/reasoning tasks and explicit memory lookup, including F3 negative-sentence handling and F9 relevant-memory recall.
+- Gemma failed on selecting updated information in F8, irrelevant-memory suppression in F10, blind alignment in F5, and independent judgment in F12.
+- LFM2.5 showed weakness on direct relevant-memory recall in F9.
+- LFM2.5 was stronger on latest-context selection in F8, irrelevant-memory suppression in F10, stale-memory override in F11, and independent judgment in F12.
+- Those memory-conflict, recency, and independence characteristics are relatively well aligned with Monga's long-term companion goals.
+- A single 12-case run does not establish either model's general capability.
+- The result does not show that LFM2.5 is immune to memory contamination, and it does not establish LFM2.5 as the final selected model.
+
 ## Current candidate assessment
 
 Current provisional Core Memory ON scores are manual interim evaluations under the current rubric, not automatically calculated scores:
@@ -838,9 +932,15 @@ Current provisional Core Memory ON scores are manual interim evaluations under t
 - Qwen3 1.7B: 10/22
 - LFM2.5 1.2B Instruct: 10/22
 
-Current assessment:
+Current finalist priority:
 
-- Gemma 3 1B currently ranks first in the formal quality benchmark.
-- LFM2.5 1.2B has similar speed, lower sampled RSS, and higher Q1~Q10 diagnostic quality with Core Memory OFF.
-- Gemma 3 1B and LFM2.5 1.2B remain the main comparison candidates at this stage.
-- Qwen3 1.7B has lower priority because its quality improvement was limited relative to its speed and RAM costs.
+- Primary candidate: LFM2.5 1.2B Instruct Q4_K_M
+  - finalist provisional manual score: 16/24
+  - repeated native decode: approximately 21.21 tok/s
+  - sampled peak RSS: approximately 837.70 MiB
+- Secondary/fallback candidate: Gemma 3 1B IT Q4_K_M
+  - finalist provisional manual score: 12/24
+  - repeated native decode: approximately 22.22 tok/s
+  - sampled peak RSS: approximately 933 MiB
+
+Gemma is slightly faster and showed strengths in explicit memory lookup and negative-sentence parsing. For Monga's current goals, LFM2.5's recency handling, irrelevant-memory suppression, stale-memory override, and independent judgment are weighted more heavily. LFM2.5's F9 relevant-memory recall weakness remains a target for an additional A/B diagnostic, so this priority is not a final model selection.
