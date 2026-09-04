@@ -922,6 +922,102 @@ One wording difference remains between the benchmarks:
 - A single 12-case run does not establish either model's general capability.
 - The result does not show that LFM2.5 is immune to memory contamination, and it does not establish LFM2.5 as the final selected model.
 
+## LFM2.5 memory serialization diagnostics
+
+These diagnostics investigate LFM2.5's F9 relevant-memory recall weakness without changing the finalist or Q1~Q11 baselines. Each result below comes from a single diagnostic run and is provisional; it must not be generalized into an overall claim about the model or a production serialization decision.
+
+### Memory-format diagnostic
+
+Test source: `app/src/androidTest/java/com/monga/app/inference/ModelMemoryFormatDiagnosticTest.kt`
+
+The diagnostic tested whether wording or a label around the common Core Memory body `사용자가 정한 가상의 암호명은 청록등대다.` affected recall. Each format also had an irrelevant-contamination control.
+
+| Format | Prefix | Relevant recall | Irrelevant contamination |
+| --- | --- | --- | --- |
+| A | none | FAIL | none observed |
+| B | `벤치마크 전용 기억:` | PASS | none observed |
+| C | `기억:` | FAIL | none observed |
+| D | `벤치마크 전용:` | PASS | none observed |
+| E | `중요 정보:` | PASS | none observed |
+| F | `사용자 정보:` | FAIL | none observed |
+
+In the D relevant-recall response, the `벤치마크 전용` wording also entered the visible output.
+
+Interpretation:
+
+- The word `기억` alone did not improve recall.
+- The results cannot be explained merely by whether any prefix was present.
+- `중요 정보:` initially appeared promising, but this result alone was not sufficient to treat it as a production format.
+
+### Important-prefix generalization diagnostic
+
+Test source: `app/src/androidTest/java/com/monga/app/inference/ModelMemoryGeneralizationDiagnosticTest.kt`
+
+This diagnostic compared the same memory fact in plain form and with the `중요 정보:` prefix across four memory categories.
+
+| Category | Memory body | Plain | `중요 정보:` |
+| --- | --- | --- | --- |
+| Preference | `사용자가 가장 좋아하는 음료는 말차라떼다.` | PASS | PASS |
+| Schedule | `사용자는 다음 주 수요일 오후 3시에 치과 예약이 있다.` | partial: recalled `오후 3시` but did not preserve `다음 주 수요일` exactly | FAIL / worse: answered `이번 주 중간쯤` and said the exact time was unknown |
+| Project | `사용자가 만든 가상 프로젝트의 이름은 푸른정원이다.` | PASS | PASS |
+| Number | `사용자가 정한 가상의 보관함 번호는 4721이다.` | PASS | PASS |
+
+Interpretation:
+
+- `중요 정보:` did not show a general recall improvement: none of the four categories improved.
+- The schedule result became worse than its plain counterpart.
+- The hypothesis of adopting `중요 정보:` as the production format is therefore withdrawn.
+- Its success for the `청록등대` case may reflect an interaction among that particular sentence, information type, prompt, and prefix.
+- Further searches for a universal "magic prefix" are discontinued to avoid overfitting to one diagnostic fact.
+
+### Natural versus structured diagnostic
+
+Test source: `app/src/androidTest/java/com/monga/app/inference/ModelMemoryStructureDiagnosticTest.kt`
+
+The diagnostic compared the existing natural-language memory sentence with this generic key-value representation:
+
+```text
+주체: 사용자
+항목: <항목>
+값: <값>
+```
+
+Observed results:
+
+| Category | Natural | Structured |
+| --- | --- | --- |
+| Codename | FAIL | FAIL |
+| Preference | PASS: recalled `말차라떼`; the response also described the user's preference as though it were the AI's own experience | FAIL |
+| Schedule | partial: preserved only `오후 3시` and lost `다음 주 수요일` | PASS: recalled the complete `다음 주 수요일 오후 3시` value |
+| Project | PASS: recalled `푸른정원` | PASS: recalled `푸른정원` and more explicitly preserved the user as the subject with `당신이 만든 가상 프로젝트` |
+| Number | PASS: recalled `4721` | PASS: recalled `4721`; no substantial difference observed |
+
+The schedule case is one instance where structure helped preserve a multi-part fact. It does not establish that structured memory is generally superior. Conversely, the preference result does not establish that natural-language memory is generally superior.
+
+### Current memory-serialization interpretation
+
+- There is no evidence that one universal memory serialization is superior across all tested memory types.
+- The generic key-value structure helped with the multi-part schedule fact but made the preference result worse.
+- An explicit field such as `주체: 사용자` may help preserve subject attribution in some cases, but it did not improve recall consistently.
+- Natural language performed well for preference, project, and number facts in this run, while losing part of the composite schedule detail.
+- Typed or category-specific memory serialization is therefore worth evaluating as a provisional design direction:
+  - schedule and appointment memory: structured field representation is a candidate;
+  - preference memory: natural-language representation was more stable in this run;
+  - simple identifier and number memory: either representation may be viable;
+  - ownership and project facts: an explicit structured subject field may be useful.
+- This is not yet a production implementation decision.
+
+### Separate subject and Persona observation
+
+Across the memory diagnostics, the model repeatedly described a user's experience or preference as though it were the AI's own experience, including inventing experiences that were not present. For example, the natural preference response recalled `말차라떼` while speaking as though the AI personally remembered its taste. This is a production Persona or system-prompt concern separate from whether memory retrieval itself succeeds.
+
+### Next step
+
+- Stop searching for a magic prefix.
+- Do not yet select one universal Natural or Structured representation.
+- Evaluate typed or category-specific memory serialization with additional diagnostics before any production change.
+- Keep LFM2.5 as a candidate rather than declaring it the final selected model.
+
 ## Current candidate assessment
 
 Current provisional Core Memory ON scores are manual interim evaluations under the current rubric, not automatically calculated scores:
@@ -943,4 +1039,4 @@ Current finalist priority:
   - repeated native decode: approximately 22.22 tok/s
   - sampled peak RSS: approximately 933 MiB
 
-Gemma is slightly faster and showed strengths in explicit memory lookup and negative-sentence parsing. For Monga's current goals, LFM2.5's recency handling, irrelevant-memory suppression, stale-memory override, and independent judgment are weighted more heavily. LFM2.5's F9 relevant-memory recall weakness remains a target for an additional A/B diagnostic, so this priority is not a final model selection.
+Gemma is slightly faster and showed strengths in explicit memory lookup and negative-sentence parsing. For Monga's current goals, LFM2.5's recency handling, irrelevant-memory suppression, stale-memory override, and independent judgment are weighted more heavily. Follow-up diagnostics did not identify a universally superior prefix or serialization for LFM2.5's F9 relevant-memory recall weakness; typed or category-specific serialization remains a provisional direction for further testing. This priority is not a final model selection.
