@@ -18,9 +18,9 @@ import android.os.PowerManager
 class LlamaModelSanityCheckTest {
 
     private val benchmarkModelFileName =
-        "Qwen3-1.7B-Q4_K_M.gguf"
+        "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
 
-    private val benchmarkDisableThinking = true
+    private val benchmarkDisableThinking = false
 
     private fun benchmarkPrompt(text: String): String =
         if (benchmarkDisableThinking) {

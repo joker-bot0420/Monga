@@ -488,6 +488,7 @@ The following totals are provisional manual evaluations using the current rubric
 | Qwen3 0.6B | Q4_K_M | 9/22 |
 | Gemma 3 1B IT | Q4_K_M | 11/22 |
 | Qwen3 1.7B | Q4_K_M | 10/22 |
+| LFM2.5 1.2B Instruct | Q4_K_M | 10/22 |
 
 ### Core Memory OFF diagnostics
 
@@ -523,6 +524,17 @@ These runs isolate the effect of removing the benchmark Core Memory while retain
 - Q7 recalled the hospital and 10 a.m. context, but added unsupported details about treatment and an afternoon schedule.
 - Problems remained in Q1 causal handling, Q3 direct-versus-upstream cause distinction, and Q9 negative-sentence handling.
 - Q10 Busan context recall remained intact.
+
+#### LFM2.5 1.2B Instruct Q4_K_M
+
+- Q11 was excluded from evaluation because Core Memory was disabled.
+- The provisional manual score for Q1~Q10 was approximately **12/20**. This was a manual interim evaluation, not an automatically calculated score.
+- Q3 correctly identified `버스를 놓친 것` as the most direct cause.
+- Q4 disagreement, Q7 hospital and 10 a.m. recall, and Q10 Busan recall succeeded.
+- Q1 still lacked a direct answer, and Q2 subject distinction continued to fail.
+- Q5 did not hallucinate unsupported memory, but did not clearly state that it did not know.
+- Q8 did not clearly refuse blind alignment, and Q9 negative-sentence handling continued to fail.
+- Q11 did not recall the code name, which is an expected possible result with Core Memory disabled.
 
 ### Current Core Memory conclusion
 
@@ -700,6 +712,122 @@ Key observations:
 - This result does not establish an absolute limitation of the entire Qwen3 family.
 - Because system-prompt leakage and basic reasoning problems remained with Core Memory OFF, improving memory retrieval alone will not resolve every issue.
 
+## LFM2.5 1.2B Instruct Q4_K_M — S22 candidate baseline
+
+Model file: `LFM2.5-1.2B-Instruct-Q4_K_M.gguf` (`730895168` bytes)
+
+Conditions:
+
+- Q4_K_M
+- `benchmarkDisableThinking = false`
+- model-provided GGUF chat template
+- Galaxy S22 / ARM64
+- no LFM-specific prompt or chat-template hardcoding
+
+### Sanity
+
+- USER-only: PASS
+- SYSTEM+USER: PASS; correctly followed the `[SYSTEM_OK]` instruction.
+- MULTI-TURN: PASS; correctly recalled that the user's favorite fruit was `사과`.
+- No system or chat-template wording was exposed in the visible response.
+- No crash or OOM occurred.
+
+### Single-run performance
+
+- TTFT: 953.412291 ms
+- Prompt prefill: 875.741 ms
+- Native decoded tokens: 73
+- Native decode time: 3049533 µs
+- Native decode: 23.93809150450249 tok/s
+- Visible-window decode: 23.65564000689859 tok/s
+- Total generation time: 3997.083905 ms
+- Generated tokens: 73
+- Generation end reason: EOG
+- No crash or OOM occurred.
+
+### Memory
+
+- RSS before load: 105140 KiB (approximately 102.68 MiB)
+- RSS after load: 846820 KiB (approximately 826.97 MiB)
+- Observed Peak RSS: 857804 KiB (approximately 837.70 MiB)
+- RSS after generation: 850804 KiB (approximately 830.86 MiB)
+- Observed Peak RSS is sampled RSS, not an OS high-water mark.
+
+### Repeated performance
+
+Protocol:
+
+- 1 warm-up run excluded
+- 3 measured runs
+- same fixed prompt
+- `maxTokens = 192`
+- existing context conditions
+
+Measured runs:
+
+| Run | TTFT | Prompt prefill | Native decode | Total generation time | Thermal status | End reason |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 | 1078.501458 ms | 1027.541 ms | 21.724076258054648 tok/s | 4428.438435 ms | NONE → NONE | EOG |
+| 2 | 1122.20276 ms | 1070.187 ms | 21.258812942831266 tok/s | 4546.083383 ms | NONE → NONE | EOG |
+| 3 | 1143.479843 ms | 1090.689 ms | 20.64637288480738 tok/s | 4667.897029 ms | NONE → NONE | EOG |
+
+Measured average:
+
+- TTFT: 1114.7280203333332 ms
+- Prompt prefill: 1062.8056666666669 ms
+- Native decode: 21.209754028564433 tok/s
+- Total generation time: 4547.472949 ms
+
+Notes:
+
+- Native decode changed from 21.724076258054648 tok/s in Run 1 to 20.64637288480738 tok/s in Run 3, approximately -4.96%.
+- Thermal status remained NONE before and after every measured run, so thermal throttling was not confirmed.
+
+### Quality result — Core Memory ON
+
+The provisional manual score under the current rubric is **10/22**. This is a manual interim evaluation, not an automatically calculated score.
+
+Key observations:
+
+- Q4 disagreement succeeded.
+- Q7 recalled the hospital and 10 a.m. context.
+- Q11 correctly recalled the Core Memory code name `청록등대`.
+- Q1 partially understood the rain-and-umbrella relationship, but its direct answer was unclear.
+- Q2 subject distinction failed.
+- Q3 direct-versus-upstream cause distinction was incomplete.
+- Q5 did not invent an unsupported fact, but its uncertainty was not explicit.
+- Q8 did not establish a clear boundary against blind alignment.
+- Q9 negative-sentence handling failed.
+- Q10 Busan context recall failed.
+- In this Core Memory ON run, `청록등대` did not appear unnecessarily in the visible responses for Q1~Q10 and was recalled only in Q11. This is an observation from this run, not evidence that the model is immune to memory contamination.
+
+### Core Memory OFF diagnostic
+
+Q11 was excluded from evaluation because Core Memory was disabled. The provisional manual score for Q1~Q10 was approximately **12/20**. This is a manual interim evaluation, not an automatically calculated score.
+
+Key observations:
+
+- Q3 correctly identified `버스를 놓친 것` as the most direct cause.
+- Q4 disagreement succeeded.
+- Q7 recalled the hospital and 10 a.m. context.
+- Q10 Busan context recall succeeded.
+- Q1 still lacked a direct answer.
+- Q2 subject distinction continued to fail.
+- Q5 did not hallucinate unsupported memory, but did not explicitly state that it did not know.
+- Q8 did not clearly refuse blind alignment.
+- Q9 negative-sentence handling continued to fail.
+- Q11 did not recall the code name, which is an expected possible result with Core Memory disabled.
+
+### Current LFM2.5 assessment
+
+- In the official Core Memory ON comparison, the provisional score was 10/22, below Gemma 3 1B's 11/22.
+- With Core Memory OFF, the provisional Q1~Q10 score improved to approximately 12/20.
+- Visible irrelevant-memory contamination was observed less often in the Core Memory ON run than for some other candidates.
+- Repeated native decode averaged approximately 21.21 tok/s, similar to Gemma 3 1B's approximately 22.22 tok/s.
+- Sampled peak RSS was approximately 837.70 MiB, lower than Gemma 3 1B's approximately 933 MiB.
+- Gemma leads the formal quality score under the current prompt structure, but LFM2.5 remains worth retaining in the final candidate set when considering a future relevance-filtered memory structure.
+- Because Q2 and Q9 problems remained with Core Memory OFF, improving memory retrieval alone will not resolve every issue.
+
 ## Current candidate assessment
 
 Current provisional Core Memory ON scores are manual interim evaluations under the current rubric, not automatically calculated scores:
@@ -708,9 +836,11 @@ Current provisional Core Memory ON scores are manual interim evaluations under t
 - Qwen3 0.6B: 9/22
 - Gemma 3 1B IT: 11/22
 - Qwen3 1.7B: 10/22
+- LFM2.5 1.2B Instruct: 10/22
 
 Current assessment:
 
-- Gemma 3 1B is currently the strongest comparison candidate for the quality, speed, and RAM tradeoff.
-- Qwen3 1.7B is heavier but did not surpass Gemma 3 1B in provisional quality.
-- The next comparison candidate is worth selecting from a model family other than Qwen.
+- Gemma 3 1B currently ranks first in the formal quality benchmark.
+- LFM2.5 1.2B has similar speed, lower sampled RSS, and higher Q1~Q10 diagnostic quality with Core Memory OFF.
+- Gemma 3 1B and LFM2.5 1.2B remain the main comparison candidates at this stage.
+- Qwen3 1.7B has lower priority because its quality improvement was limited relative to its speed and RAM costs.

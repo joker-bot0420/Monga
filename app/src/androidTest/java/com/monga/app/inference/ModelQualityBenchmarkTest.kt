@@ -17,9 +17,9 @@ import org.junit.runner.RunWith
 class ModelQualityBenchmarkTest {
 
     private val benchmarkModelFileName =
-        "Qwen3-1.7B-Q4_K_M.gguf"
+        "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
 
-    private val benchmarkDisableThinking = true
+    private val benchmarkDisableThinking = false
 
     private val benchmarkIncludeCoreMemory = true
 
