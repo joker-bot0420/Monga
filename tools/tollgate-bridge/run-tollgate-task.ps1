@@ -6,6 +6,7 @@ param(
     [switch]$SyntheticLoopSmoke,
     [switch]$RunPending,
     [switch]$LifecycleSelfTest,
+    [switch]$Utf8TransportSelfTest,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 300
 )
@@ -291,6 +292,94 @@ function Write-JsonAtomically {
     } finally {
         if (Test-Path -LiteralPath $temporaryFile -PathType Leaf) {
             Remove-Item -LiteralPath $temporaryFile -Force
+        }
+    }
+}
+
+function New-Utf8PromptTransport {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Prompt,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PromptFile,
+
+        [Parameter(Mandatory = $true)]
+        [string]$MetadataFile
+    )
+
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false, $true)
+    $promptBytes = $utf8NoBom.GetBytes($Prompt)
+    [System.IO.File]::WriteAllBytes($PromptFile, $promptBytes)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = [BitConverter]::ToString($sha256.ComputeHash($promptBytes)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+    $metadata = [ordered]@{
+        character_length = $Prompt.Length
+        utf8_byte_length = $promptBytes.Length
+        utf8_sha256 = $hash
+    } | ConvertTo-Json
+    [System.IO.File]::WriteAllText($MetadataFile, $metadata, $utf8NoBom)
+
+    return [pscustomobject]@{
+        Bytes = $promptBytes
+        CharacterLength = $Prompt.Length
+        ByteLength = $promptBytes.Length
+        Sha256 = $hash
+    }
+}
+
+function Write-Utf8PromptToProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Diagnostics.Process]$Process,
+
+        [Parameter(Mandatory = $true)]
+        [byte[]]$PromptBytes
+    )
+
+    $stdinStream = $Process.StandardInput.BaseStream
+    $stdinStream.Write($PromptBytes, 0, $PromptBytes.Length)
+    $stdinStream.Flush()
+    $stdinStream.Close()
+}
+
+function Invoke-Utf8TransportSelfTest {
+    $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) "monga-tollgate-utf8-$([Guid]::NewGuid().ToString('N'))"
+    [void](New-Item -ItemType Directory -Path $testRoot -Force)
+    $promptFile = Join-Path $testRoot 'prompt.txt'
+    $metadataFile = Join-Path $testRoot 'prompt-metadata.json'
+    $testText = "ASCII`n한글 테스트`n[TOLLGATE_APPROVED]`nREAL_ITERATION_1_COMPLETE`n실제 GitHub-backed pending execution 경로"
+    try {
+        $transport = New-Utf8PromptTransport -Prompt $testText -PromptFile $promptFile -MetadataFile $metadataFile
+        $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $roundTrip = $strictUtf8.GetString([System.IO.File]::ReadAllBytes($promptFile))
+        if ($roundTrip -cne $testText) {
+            throw 'UTF-8 file round-trip mismatch.'
+        }
+
+        $stream = [System.IO.MemoryStream]::new()
+        try {
+            $stream.Write($transport.Bytes, 0, $transport.Bytes.Length)
+            $stream.Position = 0
+            $streamBytes = $stream.ToArray()
+        } finally {
+            $stream.Dispose()
+        }
+        if ($strictUtf8.GetString($streamBytes) -cne $testText) {
+            throw 'UTF-8 byte-stream round-trip mismatch.'
+        }
+        Write-Output 'UTF8_TRANSPORT_TEST_OK'
+        Write-Output "character_length: $($transport.CharacterLength)"
+        Write-Output "utf8_byte_length: $($transport.ByteLength)"
+        Write-Output "utf8_sha256: $($transport.Sha256)"
+    } finally {
+        if (Test-Path -LiteralPath $testRoot -PathType Container) {
+            Remove-Item -LiteralPath $testRoot -Recurse -Force
         }
     }
 }
@@ -677,10 +766,12 @@ function Invoke-CodexIteration {
 
     [void](New-Item -ItemType Directory -Path $IterationDirectory -Force)
     $promptFile = Join-Path $IterationDirectory 'supervisor-prompt.txt'
+    $promptMetadataFile = Join-Path $IterationDirectory 'supervisor-prompt-metadata.json'
     $resultFile = Join-Path $IterationDirectory 'codex-result.json'
     $eventsFile = Join-Path $IterationDirectory 'codex-events.jsonl'
     $errorFile = Join-Path $IterationDirectory 'codex-stderr.txt'
-    Set-Content -LiteralPath $promptFile -Value $Prompt -Encoding utf8 -NoNewline
+    $promptTransport = New-Utf8PromptTransport -Prompt $Prompt -PromptFile $promptFile `
+        -MetadataFile $promptMetadataFile
     if (Test-Path -LiteralPath $resultFile -PathType Leaf) {
         Remove-Item -LiteralPath $resultFile -Force
     }
@@ -705,8 +796,7 @@ function Invoke-CodexIteration {
     }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $process.StandardInput.Write($Prompt)
-    $process.StandardInput.Close()
+    Write-Utf8PromptToProcess -Process $process -PromptBytes $promptTransport.Bytes
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         $process.Kill($true)
         $process.WaitForExit()
@@ -801,10 +891,10 @@ function Get-LocalStateInventory {
 }
 
 try {
-    $primaryModeCount = @(@($SyntheticSmoke, $SyntheticLoopSmoke, $RunPending, $LifecycleSelfTest) |
+    $primaryModeCount = @(@($SyntheticSmoke, $SyntheticLoopSmoke, $RunPending, $LifecycleSelfTest, $Utf8TransportSelfTest) |
         Where-Object { $_.IsPresent }).Count
     if ($primaryModeCount -ne 1) {
-        throw 'Select exactly one explicit mode: -SyntheticSmoke, -SyntheticLoopSmoke, -RunPending, or -LifecycleSelfTest.'
+        throw 'Select exactly one explicit mode: -SyntheticSmoke, -SyntheticLoopSmoke, -RunPending, -LifecycleSelfTest, or -Utf8TransportSelfTest.'
     }
     if ($WorkspaceWriteSmoke -and -not $SyntheticSmoke) {
         throw '-WorkspaceWriteSmoke is permitted only together with -SyntheticSmoke.'
@@ -836,6 +926,11 @@ try {
 
     if ($LifecycleSelfTest) {
         Invoke-LifecycleSelfTest
+        exit 0
+    }
+
+    if ($Utf8TransportSelfTest) {
+        Invoke-Utf8TransportSelfTest
         exit 0
     }
 
@@ -910,7 +1005,15 @@ try {
             } | Sort-Object)
         }
 
-        $runtimeDirectory = Join-Path $runtimeRoot "$commentId"
+        $runtimeBaseDirectory = Join-Path $runtimeRoot "$commentId"
+        $runtimeDirectory = $runtimeBaseDirectory
+        if (Test-Path -LiteralPath (Join-Path $runtimeBaseDirectory 'iteration-1') -PathType Container) {
+            $attempt = 2
+            do {
+                $runtimeDirectory = Join-Path $runtimeBaseDirectory "attempt-$attempt"
+                $attempt++
+            } while (Test-Path -LiteralPath $runtimeDirectory)
+        }
         $maxIterations = 5
         $processCount = 0
         $previousResultJson = $null
@@ -1023,12 +1126,14 @@ try {
             $iterationDirectory = Join-Path (Join-Path $runtimeRoot "$commentId") "iteration-$iteration"
             [void](New-Item -ItemType Directory -Path $iterationDirectory -Force)
             $promptFile = Join-Path $iterationDirectory 'supervisor-prompt.txt'
+            $promptMetadataFile = Join-Path $iterationDirectory 'supervisor-prompt-metadata.json'
             $resultFile = Join-Path $iterationDirectory 'codex-result.json'
             $eventsFile = Join-Path $iterationDirectory 'codex-events.jsonl'
             $errorFile = Join-Path $iterationDirectory 'codex-stderr.txt'
             $prompt = New-LoopSupervisorPrompt -Body $syntheticBody -Iteration $iteration `
                 -PreviousResultJson $previousResultJson
-            Set-Content -LiteralPath $promptFile -Value $prompt -Encoding utf8 -NoNewline
+            $promptTransport = New-Utf8PromptTransport -Prompt $prompt -PromptFile $promptFile `
+                -MetadataFile $promptMetadataFile
             if (Test-Path -LiteralPath $resultFile -PathType Leaf) {
                 Remove-Item -LiteralPath $resultFile -Force
             }
@@ -1062,8 +1167,7 @@ try {
             $processCount++
             $stdoutTask = $process.StandardOutput.ReadToEndAsync()
             $stderrTask = $process.StandardError.ReadToEndAsync()
-            $process.StandardInput.Write($prompt)
-            $process.StandardInput.Close()
+            Write-Utf8PromptToProcess -Process $process -PromptBytes $promptTransport.Bytes
 
             if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
                 $process.Kill($true)
@@ -1236,11 +1340,13 @@ try {
     [void](New-Item -ItemType Directory -Path $runtimeDirectory -Force)
 
     $promptFile = Join-Path $runtimeDirectory 'supervisor-prompt.txt'
+    $promptMetadataFile = Join-Path $runtimeDirectory 'supervisor-prompt-metadata.json'
     $resultFile = Join-Path $runtimeDirectory 'codex-result.json'
     $eventsFile = Join-Path $runtimeDirectory 'codex-events.jsonl'
     $errorFile = Join-Path $runtimeDirectory 'codex-stderr.txt'
     $prompt = New-SupervisorPrompt -Body ([string]$envelope.body) -AllowWorkspaceWrite $WorkspaceWriteSmoke.IsPresent
-    Set-Content -LiteralPath $promptFile -Value $prompt -Encoding utf8 -NoNewline
+    $promptTransport = New-Utf8PromptTransport -Prompt $prompt -PromptFile $promptFile `
+        -MetadataFile $promptMetadataFile
 
     if (Test-Path -LiteralPath $resultFile -PathType Leaf) {
         Remove-Item -LiteralPath $resultFile -Force
@@ -1295,8 +1401,7 @@ try {
 
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $process.StandardInput.Write($prompt)
-    $process.StandardInput.Close()
+    Write-Utf8PromptToProcess -Process $process -PromptBytes $promptTransport.Bytes
 
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         $process.Kill($true)
