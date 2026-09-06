@@ -69,12 +69,25 @@ function Write-Utf8NoBomAtomically {
     $directory = Split-Path -Parent $Destination
     [void](New-Item -ItemType Directory -Path $directory -Force)
     $temporaryFile = Join-Path $directory ".$([System.IO.Path]::GetFileName($Destination)).$([Guid]::NewGuid().ToString('N')).tmp"
+    $backupFile = Join-Path $directory ".$([System.IO.Path]::GetFileName($Destination)).$([Guid]::NewGuid().ToString('N')).bak"
+
     try {
         [System.IO.File]::WriteAllBytes($temporaryFile, $utf8NoBom.GetBytes($Text))
-        [System.IO.File]::Move($temporaryFile, $Destination, $true)
-    } finally {
+
+        if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+            [System.IO.File]::Replace($temporaryFile, $Destination, $backupFile)
+        }
+        else {
+            [System.IO.File]::Move($temporaryFile, $Destination)
+        }
+    }
+    finally {
         if (Test-Path -LiteralPath $temporaryFile -PathType Leaf) {
-            Remove-Item -LiteralPath $temporaryFile -Force
+            Remove-Item -LiteralPath $temporaryFile -Force -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path -LiteralPath $backupFile -PathType Leaf) {
+            Remove-Item -LiteralPath $backupFile -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -151,7 +164,7 @@ function ConvertTo-SafeReportText {
     $safe = if ($null -eq $Text) { '' } else { $Text }
     foreach ($marker in $reservedMarkers) {
         $neutralized = $marker.Replace('[', '［').Replace(']', '］')
-        $safe = $safe.Replace($marker, $neutralized, [StringComparison]::Ordinal)
+        $safe = $safe.Replace($marker, $neutralized)
     }
     return $safe
 }
