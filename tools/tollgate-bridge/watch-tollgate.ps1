@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$StageResult
 )
@@ -30,18 +30,37 @@ function Invoke-GhJson {
         [string]$Endpoint
     )
 
-    $output = & gh api --method GET $Endpoint 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        $details = ($output | Out-String).Trim()
-        throw "gh api failed for '$Endpoint': $details"
-    }
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
 
-    $json = ($output | Out-String).Trim()
-    if ([string]::IsNullOrWhiteSpace($json)) {
-        throw "gh api returned an empty response for '$Endpoint'."
-    }
+    try {
+        $process = Start-Process `
+            -FilePath 'gh' `
+            -ArgumentList @('api', '--method', 'GET', $Endpoint) `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
 
-    return $json | ConvertFrom-Json
+        $json = [System.IO.File]::ReadAllText($stdoutPath, $utf8Strict).Trim()
+        $details = [System.IO.File]::ReadAllText($stderrPath, $utf8Strict).Trim()
+
+        if ($process.ExitCode -ne 0) {
+            throw "gh api failed for '$Endpoint': $details"
+        }
+
+        if ([string]::IsNullOrWhiteSpace($json)) {
+            throw "gh api returned an empty response for '$Endpoint'."
+        }
+
+        return $json | ConvertFrom-Json
+    }
+    finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-ProcessedCommentIds {
@@ -154,7 +173,20 @@ try {
 
     do {
         $endpoint = "repos/$repository/issues/$issueNumber/comments?per_page=$perPage&page=$page"
-        $pageComments = @(Invoke-GhJson -Endpoint $endpoint)
+        $pageResult = Invoke-GhJson -Endpoint $endpoint
+        $pageComments = @(
+            foreach ($item in @($pageResult)) {
+                if ($item -is [System.Array]) {
+                    foreach ($comment in $item) {
+                        $comment
+                    }
+                }
+                else {
+                    $item
+                }
+            }
+        )
+
         foreach ($comment in $pageComments) {
             $comments.Add($comment)
         }
@@ -167,7 +199,7 @@ try {
             $_.issue_url -eq $expectedIssueUrl -and
             $_.user.login -eq $trustedUser -and
             $_.user.type -ne 'Bot' -and
-            ([string]$_.body).Contains($triggerMarker, [StringComparison]::Ordinal) -and
+            ([string]$_.body).IndexOf($triggerMarker, [StringComparison]::Ordinal) -ge 0 -and
             -not $processedCommentIds.Contains([long]$_.id)
         } |
         Sort-Object -Property @{ Expression = { [DateTimeOffset]$_.created_at }; Descending = $true },

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$SerializationSelfTest
 )
@@ -68,7 +68,7 @@ function Assert-TaskEnvelope {
     if ([string]$Envelope.marker -ne $triggerMarker) {
         throw 'Task envelope marker is invalid.'
     }
-    if (-not ([string]$Envelope.body).Contains($triggerMarker, [StringComparison]::Ordinal)) {
+    if (([string]$Envelope.body).IndexOf($triggerMarker, [StringComparison]::Ordinal) -lt 0) {
         throw 'Task envelope body does not contain the exact trigger marker.'
     }
     if ([string]$Envelope.status -ne 'pending') {
