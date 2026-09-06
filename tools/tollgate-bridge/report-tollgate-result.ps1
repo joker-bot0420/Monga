@@ -363,7 +363,13 @@ try {
     }
     $terminalBytes = [System.IO.File]::ReadAllBytes($resolvedResultFile)
     $terminalHash = Get-BytesSha256 -Bytes $terminalBytes
-    $record = $utf8NoBom.GetString($terminalBytes) | ConvertFrom-Json
+
+    $terminalText = $utf8NoBom.GetString($terminalBytes)
+    if ($terminalText.Length -gt 0 -and $terminalText[0] -eq [char]0xFEFF) {
+        $terminalText = $terminalText.Substring(1)
+    }
+
+    $record = ConvertFrom-Json -InputObject $terminalText
     Assert-TerminalRecord -Record $record -RecordPath $resolvedResultFile
     $commentId = [long]$record.comment_id
     $reportedFile = Join-Path $reportedDirectory "$commentId.json"
