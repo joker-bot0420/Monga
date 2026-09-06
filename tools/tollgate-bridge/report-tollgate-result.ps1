@@ -22,6 +22,44 @@ $reservedMarkers = @(
 )
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false, $true)
 
+function Invoke-GhJsonUtf8 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Endpoint
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+
+    try {
+        $process = Start-Process `
+            -FilePath 'gh' `
+            -ArgumentList @('api', '--method', 'GET', $Endpoint) `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+
+        $json = [System.IO.File]::ReadAllText($stdoutPath, $utf8Strict).Trim()
+        $details = [System.IO.File]::ReadAllText($stderrPath, $utf8Strict).Trim()
+
+        if ($process.ExitCode -ne 0) {
+            throw "gh api failed for '$Endpoint': $details"
+        }
+
+        if ([string]::IsNullOrWhiteSpace($json)) {
+            throw "gh api returned an empty response for '$Endpoint'."
+        }
+
+        return ConvertFrom-Json -InputObject $json
+    }
+    finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
 function Fail-Reporter {
     param([Parameter(Mandatory = $true)][string]$Message)
     [Console]::Error.WriteLine("TOLLGATE_REPORTER_ERROR: $Message")
@@ -402,15 +440,17 @@ try {
         if ($null -eq (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue)) { throw 'gh is unavailable.' }
         & gh auth status *> $null
         if ($LASTEXITCODE -ne 0) { throw 'gh authentication failed.' }
-        $login = (& gh api user --jq .login | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $login -cne $trustedUser) { throw 'Authenticated GitHub user is invalid.' }
-        $pr = & gh api "repos/$repository/pulls/$prNumber" | ConvertFrom-Json
-        if ($LASTEXITCODE -ne 0 -or [string]$pr.state -cne 'open') { throw 'Target PR is not open.' }
+        $user = Invoke-GhJsonUtf8 -Endpoint 'user'
+        $login = [string]$user.login
+        if ($login -cne $trustedUser) { throw 'Authenticated GitHub user is invalid.' }
+
+        $pr = Invoke-GhJsonUtf8 -Endpoint "repos/$repository/pulls/$prNumber"
+        if ([string]$pr.state -cne 'open') { throw 'Target PR is not open.' }
         $commentUrl = (& gh pr comment $prNumber --repo $repository --body-file $reportFile | Out-String).Trim()
         if ($LASTEXITCODE -ne 0 -or $commentUrl -notmatch 'issuecomment-(\d+)$') { throw 'GitHub comment creation failed.' }
         $githubCommentId = [long]$Matches[1]
-        $comment = & gh api "repos/$repository/issues/comments/$githubCommentId" | ConvertFrom-Json
-        if ($LASTEXITCODE -ne 0 -or [string]$comment.user.login -cne $trustedUser -or
+        $comment = Invoke-GhJsonUtf8 -Endpoint "repos/$repository/issues/comments/$githubCommentId"
+        if ([string]$comment.user.login -cne $trustedUser -or
             [string]$comment.issue_url -cne "https://api.github.com/repos/$repository/issues/$prNumber" -or
             [string]$comment.body -cne $rendered) {
             throw 'Published GitHub comment verification failed.'
