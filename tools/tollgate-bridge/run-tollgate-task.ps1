@@ -333,6 +333,67 @@ function New-Utf8PromptTransport {
     }
 }
 
+function ConvertTo-WindowsCommandLineArgument {
+    param(
+        [AllowEmptyString()]
+        [string]$Argument
+    )
+
+    if ($null -eq $Argument) {
+        $Argument = ''
+    }
+
+    if ($Argument.Length -gt 0 -and $Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashes = 0
+
+    foreach ($character in $Argument.ToCharArray()) {
+        if ($character -eq [char]92) {
+            $backslashes++
+            continue
+        }
+
+        if ($character -eq [char]34) {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * ($backslashes * 2)))
+            }
+
+            [void]$builder.Append('\')
+            [void]$builder.Append('"')
+            $backslashes = 0
+            continue
+        }
+
+        if ($backslashes -gt 0) {
+            [void]$builder.Append(('\' * $backslashes))
+            $backslashes = 0
+        }
+
+        [void]$builder.Append($character)
+    }
+
+    if ($backslashes -gt 0) {
+        [void]$builder.Append(('\' * ($backslashes * 2)))
+    }
+
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function Join-WindowsCommandLineArguments {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Arguments
+    )
+
+    return (($Arguments | ForEach-Object {
+        ConvertTo-WindowsCommandLineArgument -Argument ([string]$_)
+    }) -join ' ')
+}
 function Write-Utf8PromptToProcess {
     param(
         [Parameter(Mandatory = $true)]
@@ -782,12 +843,10 @@ function Invoke-CodexIteration {
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    foreach ($argument in @(
+    $startInfo.Arguments = Join-WindowsCommandLineArguments -Arguments @(
             'exec', '--cd', $RepositoryRoot, '--sandbox', 'workspace-write', '--ephemeral',
             '--output-schema', $SchemaFile, '--output-last-message', $resultFile,
-            '--json', '--color', 'never', '-')) {
-        [void]$startInfo.ArgumentList.Add($argument)
-    }
+            '--json', '--color', 'never', '-')
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -1152,12 +1211,10 @@ try {
             $startInfo.RedirectStandardInput = $true
             $startInfo.RedirectStandardOutput = $true
             $startInfo.RedirectStandardError = $true
-            foreach ($argument in @(
+            $startInfo.Arguments = Join-WindowsCommandLineArguments -Arguments @(
                     'exec', '--cd', $repositoryRoot, '--sandbox', 'workspace-write', '--ephemeral',
                     '--output-schema', $loopSchemaFile, '--output-last-message', $resultFile,
-                    '--json', '--color', 'never', '-')) {
-                [void]$startInfo.ArgumentList.Add($argument)
-            }
+                    '--json', '--color', 'never', '-')
 
             $process = [System.Diagnostics.Process]::new()
             $process.StartInfo = $startInfo
@@ -1378,20 +1435,22 @@ try {
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    [void]$startInfo.ArgumentList.Add('exec')
-    [void]$startInfo.ArgumentList.Add('--cd')
-    [void]$startInfo.ArgumentList.Add($repositoryRoot)
-    [void]$startInfo.ArgumentList.Add('--sandbox')
-    [void]$startInfo.ArgumentList.Add($sandboxMode)
-    [void]$startInfo.ArgumentList.Add('--ephemeral')
-    [void]$startInfo.ArgumentList.Add('--output-schema')
-    [void]$startInfo.ArgumentList.Add($schemaFile)
-    [void]$startInfo.ArgumentList.Add('--output-last-message')
-    [void]$startInfo.ArgumentList.Add($resultFile)
-    [void]$startInfo.ArgumentList.Add('--json')
-    [void]$startInfo.ArgumentList.Add('--color')
-    [void]$startInfo.ArgumentList.Add('never')
-    [void]$startInfo.ArgumentList.Add('-')
+    $startInfo.Arguments = Join-WindowsCommandLineArguments -Arguments @(
+        'exec',
+        '--cd',
+        $repositoryRoot,
+        '--sandbox',
+        $sandboxMode,
+        '--ephemeral',
+        '--output-schema',
+        $schemaFile,
+        '--output-last-message',
+        $resultFile,
+        '--json',
+        '--color',
+        'never',
+        '-'
+    )
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
