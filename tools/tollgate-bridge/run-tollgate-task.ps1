@@ -140,8 +140,8 @@ function New-SupervisorPrompt {
         $delimiterId = [Guid]::NewGuid().ToString('N')
         $beginDelimiter = "--- TOLLGATE_APPROVAL_DATA_${delimiterId}_BEGIN ---"
         $endDelimiter = "--- TOLLGATE_APPROVAL_DATA_${delimiterId}_END ---"
-    } while ($Body.Contains($beginDelimiter, [StringComparison]::Ordinal) -or
-        $Body.Contains($endDelimiter, [StringComparison]::Ordinal))
+    } while (($Body.IndexOf($beginDelimiter, [StringComparison]::Ordinal) -ge 0) -or
+        ($Body.IndexOf($endDelimiter, [StringComparison]::Ordinal) -ge 0))
 
     $modeInstructions =
         if ($AllowWorkspaceWrite) {
@@ -638,10 +638,10 @@ function New-RealSupervisorPrompt {
         $previousBegin = "--- PREVIOUS_ITERATION_RESULT_${delimiterId}_BEGIN ---"
         $previousEnd = "--- PREVIOUS_ITERATION_RESULT_${delimiterId}_END ---"
         $previousData = if ([string]::IsNullOrEmpty($PreviousResultJson)) { 'none' } else { $PreviousResultJson }
-    } while ($Body.Contains($approvalBegin, [StringComparison]::Ordinal) -or
-        $Body.Contains($approvalEnd, [StringComparison]::Ordinal) -or
-        $previousData.Contains($previousBegin, [StringComparison]::Ordinal) -or
-        $previousData.Contains($previousEnd, [StringComparison]::Ordinal))
+    } while (($Body.IndexOf($approvalBegin, [StringComparison]::Ordinal) -ge 0) -or
+        ($Body.IndexOf($approvalEnd, [StringComparison]::Ordinal) -ge 0) -or
+        ($previousData.IndexOf($previousBegin, [StringComparison]::Ordinal) -ge 0) -or
+        ($previousData.IndexOf($previousEnd, [StringComparison]::Ordinal) -ge 0))
 
     return @"
 You are the bounded execution agent for the Monga Tollgate Development Protocol.
