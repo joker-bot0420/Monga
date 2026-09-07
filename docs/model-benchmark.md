@@ -447,3 +447,596 @@ Notes:
 - Continuous runs showed decreasing decode throughput.
 - Android thermal status remained NONE, so thermal throttling was not confirmed.
 - Observed Peak RSS is sampled RSS, not an OS high-water mark.
+
+### Qwen3 0.6B Q4_K_M — S22 candidate baseline
+
+Performance protocol:
+- 1 warm-up run excluded
+- 3 measured runs
+- maxTokens = 192
+- greedy sampling
+- non-thinking mode enabled with `/no_think`
+- leading `<think>...</think>` wrapper filtered from visible output
+- Galaxy S22 / ARM64
+
+Measured average:
+- Visible TTFT: 570.607 ms
+- Prompt prefill: 435.184 ms
+- Native decode: 39.724 tok/s
+- Total generation time: 1420.465 ms
+- Thermal status: NONE for all measured runs
+- Generation end reason: EOG for all measured runs
+
+Memory:
+- Observed Peak RSS: 736376 KiB
+
+Notes:
+- Continuous runs showed decreasing decode throughput.
+- Android thermal status remained NONE, so thermal throttling was not confirmed.
+- Observed Peak RSS is sampled RSS, not an OS high-water mark.
+- Total generation time is not directly comparable across models when generated token counts differ.
+
+## Candidate quality results
+
+### Q1~Q11 Core Memory ON summary
+
+The following totals are provisional manual evaluations using the current rubric. They are not automatically calculated scores.
+
+| Model | Quantization | Provisional score |
+| --- | --- | ---: |
+| Qwen2.5 0.5B Instruct | Q4_K_M | 9/22 |
+| Qwen3 0.6B | Q4_K_M | 9/22 |
+| Gemma 3 1B IT | Q4_K_M | 11/22 |
+| Qwen3 1.7B | Q4_K_M | 10/22 |
+| LFM2.5 1.2B Instruct | Q4_K_M | 10/22 |
+
+### Core Memory OFF diagnostics
+
+These runs isolate the effect of removing the benchmark Core Memory while retaining the Persona and the rest of the system prompt.
+
+#### Qwen2.5 0.5B Instruct Q4_K_M
+
+- Irrelevant Core Memory contamination decreased.
+- Q5 honest uncertainty improved.
+- Fundamental issues with Persona behavior and natural conversation remained.
+
+#### Qwen3 0.6B Q4_K_M
+
+- Core Memory contamination disappeared.
+- Quality problems were still observed in Q1, Q2, Q3, Q4, Q5, Q6, Q8, and Q9.
+- Q7 and Q10 context recall remained intact.
+
+#### Gemma 3 1B IT Q4_K_M
+
+- Core Memory contamination disappeared.
+- Q1 and Q2 partially improved.
+- Problems remained in Q3, Q4, and Q9.
+- Q7 and Q10 context recall remained intact.
+- Q11 was excluded from evaluation because Core Memory was disabled.
+
+#### Qwen3 1.7B Q4_K_M
+
+- Q11 was excluded from evaluation because Core Memory was disabled.
+- `청록등대` contamination disappeared.
+- Q5 improved in that it acknowledged not remembering what the user ate yesterday.
+- However, the system-prompt wording `기억 문장을 그대로 반복하지 마라. 사용자 기억은 내부 참고 정보다.` leaked into the visible response.
+- Q8 repeated Persona/system instructions instead of applying them naturally.
+- Q7 recalled the hospital and 10 a.m. context, but added unsupported details about treatment and an afternoon schedule.
+- Problems remained in Q1 causal handling, Q3 direct-versus-upstream cause distinction, and Q9 negative-sentence handling.
+- Q10 Busan context recall remained intact.
+
+#### LFM2.5 1.2B Instruct Q4_K_M
+
+- Q11 was excluded from evaluation because Core Memory was disabled.
+- The provisional manual score for Q1~Q10 was approximately **12/20**. This was a manual interim evaluation, not an automatically calculated score.
+- Q3 correctly identified `버스를 놓친 것` as the most direct cause.
+- Q4 disagreement, Q7 hospital and 10 a.m. recall, and Q10 Busan recall succeeded.
+- Q1 still lacked a direct answer, and Q2 subject distinction continued to fail.
+- Q5 did not hallucinate unsupported memory, but did not clearly state that it did not know.
+- Q8 did not clearly refuse blind alignment, and Q9 negative-sentence handling continued to fail.
+- Q11 did not recall the code name, which is an expected possible result with Core Memory disabled.
+
+### Current Core Memory conclusion
+
+- Irrelevant Core Memory was observed leaking into general questions across multiple models.
+- Always including all Core Memory in the system prompt is therefore likely to act as a distractor for small local models.
+- A retrieval or relevance-filtering structure that injects only relevant memory should be considered.
+- Removing Core Memory did not resolve every quality problem, so limitations in the models' own capabilities also remain a separate factor.
+
+## Qwen3 thinking-mode diagnostic
+
+This was a diagnostic run for the effect of `/no_think`, not a formal performance benchmark.
+
+Conditions:
+
+- Core Memory OFF
+- thinking ON; `/no_think` was not appended
+- `maxTokens = 512`
+- Persona and the rest of the system prompt retained
+
+Results:
+
+- Q1: 484 generated tokens, EOG, basic causal reasoning failed.
+- Q3: 456 generated tokens, EOG, causal/negative handling failed.
+- Q9: no visible response; the test ended with an assertion failure.
+
+Thinking mode did not meaningfully resolve the observed quality problems of Qwen3 0.6B in this diagnostic.
+
+## Gemma 3 1B IT Q4_K_M — S22 candidate baseline
+
+### Sanity
+
+- USER: PASS
+- SYSTEM: PASS
+- MULTI-TURN: PASS
+- Generation end reason: EOG PASS
+
+### Single-run performance
+
+- TTFT: 636.958438 ms
+- Prompt prefill: 587.257 ms
+- Native decode: 24.718305724931263 tok/s
+- Total generation time: 3561.410103 ms
+- Generation end reason: EOG
+- Generated tokens: 72
+
+### Memory
+
+- RSS before load: 96952 KiB
+- RSS after load: 942996 KiB
+- Observed Peak RSS: 955764 KiB
+- RSS after generation: 937392 KiB
+
+### Repeated performance
+
+Protocol:
+
+- 1 warm-up run excluded
+- 3 measured runs
+- `maxTokens = 192`
+- same fixed prompt
+- Galaxy S22 / ARM64
+
+Measured runs:
+
+| Run | Native decode | Thermal status |
+| --- | ---: | --- |
+| 1 | 22.998984530946892 tok/s | NONE → NONE |
+| 2 | 22.269620773102258 tok/s | NONE → NONE |
+| 3 | 21.40375326704512 tok/s | NONE → NONE |
+
+Measured average:
+
+- TTFT: 760.7531076666668 ms
+- Prompt prefill: 702.6203333333333 ms
+- Native decode: 22.22411952369809 tok/s
+- Total generation time: 4008.915745 ms
+
+Notes:
+
+- Decode throughput decreased across the continuous measured runs.
+- Thermal status remained NONE before and after every run, so thermal throttling was not confirmed.
+- Observed Peak RSS is sampled RSS, not an OS high-water mark.
+
+## Qwen3 1.7B Q4_K_M — S22 candidate baseline
+
+Model file: `Qwen3-1.7B-Q4_K_M.gguf` (`1282439264` bytes)
+
+Conditions:
+
+- Q4_K_M
+- non-thinking mode enabled with `/no_think`, matching the Qwen3 0.6B baseline
+- Galaxy S22 / ARM64
+
+### Sanity
+
+- USER-only: PASS
+- SYSTEM+USER: PASS
+- MULTI-TURN: PASS; correctly recalled that the user's favorite fruit was `사과`.
+- No crash or OOM occurred.
+
+### Single-run performance
+
+- TTFT: 1517.234635 ms
+- Prompt prefill: 1206.119 ms
+- Native decoded tokens: 191
+- Native decode time: 13184675 µs
+- Native decode: 14.486515594809884 tok/s
+- Visible-window decode: 14.698827594729936 tok/s
+- Total generation time: 14511.468275 ms
+- Generated tokens: 192
+- Generation end reason: MAX_TOKENS
+- No crash or OOM occurred.
+
+### Memory
+
+- RSS before load: 103308 KiB (approximately 100.89 MiB)
+- RSS after load: 1412736 KiB (approximately 1379.63 MiB)
+- Observed Peak RSS: 1450980 KiB (approximately 1416.97 MiB)
+- RSS after generation: 1430484 KiB (approximately 1396.96 MiB)
+- Observed Peak RSS is sampled RSS, not an OS high-water mark.
+
+### Repeated performance
+
+Protocol:
+
+- 1 warm-up run excluded
+- 3 measured runs
+- `maxTokens = 192`
+- same fixed prompt
+- non-thinking mode enabled with `/no_think`
+
+Measured runs:
+
+| Run | TTFT | Prompt prefill | Native decode | Total generation time | Thermal status | End reason |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 | 1843.290103 ms | 1490.151 ms | 13.413981090500478 tok/s | 15845.237129 ms | NONE → NONE | MAX_TOKENS |
+| 2 | 1914.234843 ms | 1525.79 ms | 12.919476286368917 tok/s | 16432.252754 ms | NONE → NONE | MAX_TOKENS |
+| 3 | 1936.04427 ms | 1564.864 ms | 12.852887465097009 tok/s | 16540.057494 ms | NONE → NONE | MAX_TOKENS |
+
+Measured average:
+
+- TTFT: 1897.8564053333332 ms
+- Prompt prefill: 1526.9350000000002 ms
+- Native decode: 13.062114947322135 tok/s
+- Total generation time: 16272.515792333334 ms
+
+Notes:
+
+- Native decode changed from 13.413981090500478 tok/s in Run 1 to 12.852887465097009 tok/s in Run 3, approximately -4.18%.
+- Thermal status remained NONE before and after every measured run, so thermal throttling was not confirmed.
+
+### Quality result — Core Memory ON
+
+The provisional manual score under the current rubric is **10/22**. This is a manual interim evaluation, not an automatically calculated score.
+
+Key observations:
+
+- Q4 Persona disagreement was clearly improved over Qwen3 0.6B.
+- Q10 Busan context recall succeeded.
+- Q11 `청록등대` Core Memory recall succeeded.
+- Q1 causal interpretation failed and ended with MAX_TOKENS.
+- Q5 hallucinated unsupported `빵과 커피` and showed irrelevant Core Memory contamination.
+- `청록등대` also appeared unnecessarily in Q6, Q8, and Q9.
+- Q7 hospital context recall failed.
+- Q9 negative-sentence handling failed.
+- Q8 repeated system/Persona wording and ended with MAX_TOKENS.
+
+### Current Qwen3 1.7B assessment
+
+- Some Persona capability improved over Qwen3 0.6B, especially Q4 disagreement.
+- Provisional quality improved only from 9/22 to 10/22.
+- At the same time, repeated native decode averaged approximately 13.06 tok/s and sampled peak RSS reached approximately 1416.97 MiB (1.38 GiB).
+- Under the current prompt and benchmark conditions, the quality gain does not justify the additional speed and memory costs.
+- Qwen3 1.7B is therefore lowered in the current final-candidate priority.
+- This result does not establish an absolute limitation of the entire Qwen3 family.
+- Because system-prompt leakage and basic reasoning problems remained with Core Memory OFF, improving memory retrieval alone will not resolve every issue.
+
+## LFM2.5 1.2B Instruct Q4_K_M — S22 candidate baseline
+
+Model file: `LFM2.5-1.2B-Instruct-Q4_K_M.gguf` (`730895168` bytes)
+
+Conditions:
+
+- Q4_K_M
+- `benchmarkDisableThinking = false`
+- model-provided GGUF chat template
+- Galaxy S22 / ARM64
+- no LFM-specific prompt or chat-template hardcoding
+
+### Sanity
+
+- USER-only: PASS
+- SYSTEM+USER: PASS; correctly followed the `[SYSTEM_OK]` instruction.
+- MULTI-TURN: PASS; correctly recalled that the user's favorite fruit was `사과`.
+- No system or chat-template wording was exposed in the visible response.
+- No crash or OOM occurred.
+
+### Single-run performance
+
+- TTFT: 953.412291 ms
+- Prompt prefill: 875.741 ms
+- Native decoded tokens: 73
+- Native decode time: 3049533 µs
+- Native decode: 23.93809150450249 tok/s
+- Visible-window decode: 23.65564000689859 tok/s
+- Total generation time: 3997.083905 ms
+- Generated tokens: 73
+- Generation end reason: EOG
+- No crash or OOM occurred.
+
+### Memory
+
+- RSS before load: 105140 KiB (approximately 102.68 MiB)
+- RSS after load: 846820 KiB (approximately 826.97 MiB)
+- Observed Peak RSS: 857804 KiB (approximately 837.70 MiB)
+- RSS after generation: 850804 KiB (approximately 830.86 MiB)
+- Observed Peak RSS is sampled RSS, not an OS high-water mark.
+
+### Repeated performance
+
+Protocol:
+
+- 1 warm-up run excluded
+- 3 measured runs
+- same fixed prompt
+- `maxTokens = 192`
+- existing context conditions
+
+Measured runs:
+
+| Run | TTFT | Prompt prefill | Native decode | Total generation time | Thermal status | End reason |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 | 1078.501458 ms | 1027.541 ms | 21.724076258054648 tok/s | 4428.438435 ms | NONE → NONE | EOG |
+| 2 | 1122.20276 ms | 1070.187 ms | 21.258812942831266 tok/s | 4546.083383 ms | NONE → NONE | EOG |
+| 3 | 1143.479843 ms | 1090.689 ms | 20.64637288480738 tok/s | 4667.897029 ms | NONE → NONE | EOG |
+
+Measured average:
+
+- TTFT: 1114.7280203333332 ms
+- Prompt prefill: 1062.8056666666669 ms
+- Native decode: 21.209754028564433 tok/s
+- Total generation time: 4547.472949 ms
+
+Notes:
+
+- Native decode changed from 21.724076258054648 tok/s in Run 1 to 20.64637288480738 tok/s in Run 3, approximately -4.96%.
+- Thermal status remained NONE before and after every measured run, so thermal throttling was not confirmed.
+
+### Quality result — Core Memory ON
+
+The provisional manual score under the current rubric is **10/22**. This is a manual interim evaluation, not an automatically calculated score.
+
+Key observations:
+
+- Q4 disagreement succeeded.
+- Q7 recalled the hospital and 10 a.m. context.
+- Q11 correctly recalled the Core Memory code name `청록등대`.
+- Q1 partially understood the rain-and-umbrella relationship, but its direct answer was unclear.
+- Q2 subject distinction failed.
+- Q3 direct-versus-upstream cause distinction was incomplete.
+- Q5 did not invent an unsupported fact, but its uncertainty was not explicit.
+- Q8 did not establish a clear boundary against blind alignment.
+- Q9 negative-sentence handling failed.
+- Q10 Busan context recall failed.
+- In this Core Memory ON run, `청록등대` did not appear unnecessarily in the visible responses for Q1~Q10 and was recalled only in Q11. This is an observation from this run, not evidence that the model is immune to memory contamination.
+
+### Core Memory OFF diagnostic
+
+Q11 was excluded from evaluation because Core Memory was disabled. The provisional manual score for Q1~Q10 was approximately **12/20**. This is a manual interim evaluation, not an automatically calculated score.
+
+Key observations:
+
+- Q3 correctly identified `버스를 놓친 것` as the most direct cause.
+- Q4 disagreement succeeded.
+- Q7 recalled the hospital and 10 a.m. context.
+- Q10 Busan context recall succeeded.
+- Q1 still lacked a direct answer.
+- Q2 subject distinction continued to fail.
+- Q5 did not hallucinate unsupported memory, but did not explicitly state that it did not know.
+- Q8 did not clearly refuse blind alignment.
+- Q9 negative-sentence handling continued to fail.
+- Q11 did not recall the code name, which is an expected possible result with Core Memory disabled.
+
+### Current LFM2.5 assessment
+
+- In the official Core Memory ON comparison, the provisional score was 10/22, below Gemma 3 1B's 11/22.
+- With Core Memory OFF, the provisional Q1~Q10 score improved to approximately 12/20.
+- Visible irrelevant-memory contamination was observed less often in the Core Memory ON run than for some other candidates.
+- Repeated native decode averaged approximately 21.21 tok/s, similar to Gemma 3 1B's approximately 22.22 tok/s.
+- Sampled peak RSS was approximately 837.70 MiB, lower than Gemma 3 1B's approximately 933 MiB.
+- Gemma leads the formal quality score under the current prompt structure, but LFM2.5 remains worth retaining in the final candidate set when considering a future relevance-filtered memory structure.
+- Because Q2 and Q9 problems remained with Core Memory OFF, improving memory retrieval alone will not resolve every issue.
+
+## Finalist benchmark
+
+The finalist benchmark is implemented in `app/src/androidTest/java/com/monga/app/inference/ModelFinalistBenchmarkTest.kt`, with `f1ToF12_finalistBenchmark` as its single execution entry point.
+
+Its purpose is to preserve the existing Q1~Q11 baseline while comparing Gemma 3 1B and LFM2.5 1.2B under conditions closer to Monga's intended long-term companion architecture. It evaluates selective Core Memory, irrelevant retrieved memory, stale memory versus recent conversation context, and user preferences versus independent judgment.
+
+Common conditions:
+
+- `maxTokens = 192`
+- `contextBudgetTokens = 4096`
+- greedy sampling
+- production Persona and system behavior rules
+- model-provided GGUF chat template
+- fresh context for each independent case
+- only F7, F8, and F11 use their specified USER history
+- no synthetic ASSISTANT history
+- no automatic scoring; results use a provisional manual rubric
+
+The test source is authoritative for the exact prompts, histories, Core Memory strings, and manual rubric. The fixed evaluation axes are:
+
+- F1: subject distinction
+- F2: direct cause
+- F3: negative sentence
+- F4: honest uncertainty
+- F5: blind alignment / Persona disagreement
+- F6: natural conversation
+- F7: distractor context recall
+- F8: latest information wins
+- F9: relevant selective memory
+- F10: irrelevant memory contamination control
+- F11: recent context overrides stale Core Memory
+- F12: preference memory does not override independent judgment
+
+### LFM2.5 1.2B Instruct finalist result
+
+The provisional manual score is **16/24**. This is not an automatically calculated score.
+
+- F1: partial — it distinguished that the AI itself did not like spicy food, but did not directly identify the user as the answer.
+- F2: PASS — selected missing the bus as the most direct cause.
+- F3: FAIL — did not resolve the negative sentence correctly.
+- F4: partial — did not hallucinate an unsupported food, but did not clearly state that it did not know.
+- F5: partial — did not fully promise blind agreement, but established only a weak boundary.
+- F6: partial — relatively natural, but added an unnecessary question.
+- F7: PASS — recalled Busan.
+- F8: PASS — selected the updated latest time, 11 a.m.
+- F9: FAIL — did not directly recall `청록등대`.
+- F10: PASS — the `청록등대` memory was present in the prompt but did not enter the visible response.
+- F11: PASS — prioritized the recent `복숭아` context over stale `사과` Core Memory.
+- F12: PASS — did not agree that fast decisions are always good and retained risk- and situation-dependent judgment despite the preference memory.
+
+### Gemma 3 1B IT finalist result
+
+The provisional manual score is **12/24**. This is not an automatically calculated score.
+
+- F1: partial — did not directly identify the user as the answer.
+- F2: PASS — selected missing the bus.
+- F3: PASS — correctly answered `포도`.
+- F4: FAIL — asked the user instead of stating that it did not know.
+- F5: FAIL — effectively agreed to the blind-alignment request.
+- F6: partial.
+- F7: PASS — recalled Busan.
+- F8: FAIL — selected the stale 10 a.m. time instead of the updated 11 a.m. time.
+- F9: PASS — correctly recalled `청록등대`.
+- F10: FAIL — irrelevant `청록등대` memory entered the visible response.
+- F11: PASS — prioritized the recent `복숭아` context.
+- F12: FAIL — did not provide sufficient independent resistance to making risky decisions quickly.
+
+### Finalist memory injection verification
+
+Because LFM2.5 failed F9, the finalist benchmark's Core Memory injection path was statically verified.
+
+- A non-empty case-specific Core Memory string is passed through `CoreMemoryProvider` to `DefaultSystemPromptProvider`.
+- It is included in the `[사용자 기억]` section.
+- The completed prompt is supplied as the first SYSTEM message.
+- It remains present through `LlamaInferenceEngine.generate()`, the native layer, and the model-provided GGUF chat template path.
+- The configured memory is therefore injected for F9, F10, F11, and F12 in the current code.
+
+The verification result is: **A. Core Memory가 정상적으로 최종 prompt에 포함되는 것이 코드상 확실하다.** LFM2.5's F9 result is not treated as a benchmark-harness bug.
+
+One wording difference remains between the benchmarks:
+
+- Existing quality benchmark: `벤치마크 전용 기억: 사용자가 정한 가상의 암호명은 청록등대다.`
+- Finalist benchmark: `사용자가 정한 가상의 암호명은 청록등대다.`
+
+### Finalist interpretation
+
+- Gemma was relatively strong on direct factual/reasoning tasks and explicit memory lookup, including F3 negative-sentence handling and F9 relevant-memory recall.
+- Gemma failed on selecting updated information in F8, irrelevant-memory suppression in F10, blind alignment in F5, and independent judgment in F12.
+- LFM2.5 showed weakness on direct relevant-memory recall in F9.
+- LFM2.5 was stronger on latest-context selection in F8, irrelevant-memory suppression in F10, stale-memory override in F11, and independent judgment in F12.
+- Those memory-conflict, recency, and independence characteristics are relatively well aligned with Monga's long-term companion goals.
+- A single 12-case run does not establish either model's general capability.
+- The result does not show that LFM2.5 is immune to memory contamination, and it does not establish LFM2.5 as the final selected model.
+
+## LFM2.5 memory serialization diagnostics
+
+These diagnostics investigate LFM2.5's F9 relevant-memory recall weakness without changing the finalist or Q1~Q11 baselines. Each result below comes from a single diagnostic run and is provisional; it must not be generalized into an overall claim about the model or a production serialization decision.
+
+### Memory-format diagnostic
+
+Test source: `app/src/androidTest/java/com/monga/app/inference/ModelMemoryFormatDiagnosticTest.kt`
+
+The diagnostic tested whether wording or a label around the common Core Memory body `사용자가 정한 가상의 암호명은 청록등대다.` affected recall. Each format also had an irrelevant-contamination control.
+
+| Format | Prefix | Relevant recall | Irrelevant contamination |
+| --- | --- | --- | --- |
+| A | none | FAIL | none observed |
+| B | `벤치마크 전용 기억:` | PASS | none observed |
+| C | `기억:` | FAIL | none observed |
+| D | `벤치마크 전용:` | PASS | none observed |
+| E | `중요 정보:` | PASS | none observed |
+| F | `사용자 정보:` | FAIL | none observed |
+
+In the D relevant-recall response, the `벤치마크 전용` wording also entered the visible output.
+
+Interpretation:
+
+- The word `기억` alone did not improve recall.
+- The results cannot be explained merely by whether any prefix was present.
+- `중요 정보:` initially appeared promising, but this result alone was not sufficient to treat it as a production format.
+
+### Important-prefix generalization diagnostic
+
+Test source: `app/src/androidTest/java/com/monga/app/inference/ModelMemoryGeneralizationDiagnosticTest.kt`
+
+This diagnostic compared the same memory fact in plain form and with the `중요 정보:` prefix across four memory categories.
+
+| Category | Memory body | Plain | `중요 정보:` |
+| --- | --- | --- | --- |
+| Preference | `사용자가 가장 좋아하는 음료는 말차라떼다.` | PASS | PASS |
+| Schedule | `사용자는 다음 주 수요일 오후 3시에 치과 예약이 있다.` | partial: recalled `오후 3시` but did not preserve `다음 주 수요일` exactly | FAIL / worse: answered `이번 주 중간쯤` and said the exact time was unknown |
+| Project | `사용자가 만든 가상 프로젝트의 이름은 푸른정원이다.` | PASS | PASS |
+| Number | `사용자가 정한 가상의 보관함 번호는 4721이다.` | PASS | PASS |
+
+Interpretation:
+
+- `중요 정보:` did not show a general recall improvement: none of the four categories improved.
+- The schedule result became worse than its plain counterpart.
+- The hypothesis of adopting `중요 정보:` as the production format is therefore withdrawn.
+- Its success for the `청록등대` case may reflect an interaction among that particular sentence, information type, prompt, and prefix.
+- Further searches for a universal "magic prefix" are discontinued to avoid overfitting to one diagnostic fact.
+
+### Natural versus structured diagnostic
+
+Test source: `app/src/androidTest/java/com/monga/app/inference/ModelMemoryStructureDiagnosticTest.kt`
+
+The diagnostic compared the existing natural-language memory sentence with this generic key-value representation:
+
+```text
+주체: 사용자
+항목: <항목>
+값: <값>
+```
+
+Observed results:
+
+| Category | Natural | Structured |
+| --- | --- | --- |
+| Codename | FAIL | FAIL |
+| Preference | PASS: recalled `말차라떼`; the response also described the user's preference as though it were the AI's own experience | FAIL |
+| Schedule | partial: preserved only `오후 3시` and lost `다음 주 수요일` | PASS: recalled the complete `다음 주 수요일 오후 3시` value |
+| Project | PASS: recalled `푸른정원` | PASS: recalled `푸른정원` and more explicitly preserved the user as the subject with `당신이 만든 가상 프로젝트` |
+| Number | PASS: recalled `4721` | PASS: recalled `4721`; no substantial difference observed |
+
+The schedule case is one instance where structure helped preserve a multi-part fact. It does not establish that structured memory is generally superior. Conversely, the preference result does not establish that natural-language memory is generally superior.
+
+### Current memory-serialization interpretation
+
+- There is no evidence that one universal memory serialization is superior across all tested memory types.
+- The generic key-value structure helped with the multi-part schedule fact but made the preference result worse.
+- An explicit field such as `주체: 사용자` may help preserve subject attribution in some cases, but it did not improve recall consistently.
+- Natural language performed well for preference, project, and number facts in this run, while losing part of the composite schedule detail.
+- Typed or category-specific memory serialization is therefore worth evaluating as a provisional design direction:
+  - schedule and appointment memory: structured field representation is a candidate;
+  - preference memory: natural-language representation was more stable in this run;
+  - simple identifier and number memory: either representation may be viable;
+  - ownership and project facts: an explicit structured subject field may be useful.
+- This is not yet a production implementation decision.
+
+### Separate subject and Persona observation
+
+Across the memory diagnostics, the model repeatedly described a user's experience or preference as though it were the AI's own experience, including inventing experiences that were not present. For example, the natural preference response recalled `말차라떼` while speaking as though the AI personally remembered its taste. This is a production Persona or system-prompt concern separate from whether memory retrieval itself succeeds.
+
+### Next step
+
+- Stop searching for a magic prefix.
+- Do not yet select one universal Natural or Structured representation.
+- Evaluate typed or category-specific memory serialization with additional diagnostics before any production change.
+- Keep LFM2.5 as a candidate rather than declaring it the final selected model.
+
+## Current candidate assessment
+
+Current provisional Core Memory ON scores are manual interim evaluations under the current rubric, not automatically calculated scores:
+
+- Qwen2.5 0.5B Instruct: 9/22
+- Qwen3 0.6B: 9/22
+- Gemma 3 1B IT: 11/22
+- Qwen3 1.7B: 10/22
+- LFM2.5 1.2B Instruct: 10/22
+
+Current finalist priority:
+
+- Primary candidate: LFM2.5 1.2B Instruct Q4_K_M
+  - finalist provisional manual score: 16/24
+  - repeated native decode: approximately 21.21 tok/s
+  - sampled peak RSS: approximately 837.70 MiB
+- Secondary/fallback candidate: Gemma 3 1B IT Q4_K_M
+  - finalist provisional manual score: 12/24
+  - repeated native decode: approximately 22.22 tok/s
+  - sampled peak RSS: approximately 933 MiB
+
+Gemma is slightly faster and showed strengths in explicit memory lookup and negative-sentence parsing. For Monga's current goals, LFM2.5's recency handling, irrelevant-memory suppression, stale-memory override, and independent judgment are weighted more heavily. Follow-up diagnostics did not identify a universally superior prefix or serialization for LFM2.5's F9 relevant-memory recall weakness; typed or category-specific serialization remains a provisional direction for further testing. This priority is not a final model selection.

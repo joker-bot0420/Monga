@@ -32,28 +32,40 @@ class Utf8StreamDecoder {
         )
 
         val input = ByteBuffer.wrap(combined)
-        val output = CharBuffer.allocate(combined.size.coerceAtLeast(1))
 
-        val result = decoder.decode(
-            input,
-            output,
-            false,
-        )
+        val decoded = StringBuilder()
 
-        if (result.isError) {
-            result.throwException()
-        }
+        val output =
+            CharBuffer.allocate(
+                combined.size.coerceAtLeast(8)
+            )
 
-        if (result.isOverflow) {
-            throw IllegalStateException("UTF-8 decode buffer overflow.")
+        while (true) {
+            val result = decoder.decode(
+                input,
+                output,
+                false,
+            )
+
+            output.flip()
+            decoded.append(output)
+            output.clear()
+
+            if (result.isError) {
+                result.throwException()
+            }
+
+            if (result.isUnderflow) {
+                break
+            }
+
+            // OVERFLOW이면 비운 출력 버퍼로 계속 디코딩한다.
         }
 
         pending = ByteArray(input.remaining())
         input.get(pending)
 
-        output.flip()
-
-        return output.toString()
+        return decoded.toString()
     }
 
     fun finish(): String {
