@@ -184,7 +184,6 @@ class LlamaInferenceEngine(
         _state.value = InferenceState.Generating
 
         val decoder = Utf8StreamDecoder()
-        val thinkFilter = LeadingThinkBlockFilter()
 
         try {
 
@@ -223,10 +222,9 @@ class LlamaInferenceEngine(
                 }
 
                 val text = decoder.decode(bytes)
-                val visibleText = thinkFilter.accept(text)
 
-                if (visibleText.isNotEmpty()) {
-                    emit(InferenceEvent.Token(visibleText))
+                if (text.isNotEmpty()) {
+                    emit(InferenceEvent.Token(text))
                 }
             }
 
@@ -234,11 +232,9 @@ class LlamaInferenceEngine(
                 emit(InferenceEvent.Cancelled)
             } else {
                 val remainingText = decoder.finish()
-                val visibleRemainingText =
-                    thinkFilter.accept(remainingText)
 
-                if (visibleRemainingText.isNotEmpty()) {
-                    emit(InferenceEvent.Token(visibleRemainingText))
+                if (remainingText.isNotEmpty()) {
+                    emit(InferenceEvent.Token(remainingText))
                 }
 
                 emit(InferenceEvent.Completed)

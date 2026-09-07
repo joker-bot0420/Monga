@@ -17,18 +17,6 @@ import android.os.PowerManager
 @RunWith(AndroidJUnit4::class)
 class LlamaModelSanityCheckTest {
 
-    private val benchmarkModelFileName =
-        "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
-
-    private val benchmarkDisableThinking = false
-
-    private fun benchmarkPrompt(text: String): String =
-        if (benchmarkDisableThinking) {
-            "$text /no_think"
-        } else {
-            text
-        }
-
     @Test
     fun userOnly_sanityCheck() = runBlocking {
         val context =
@@ -36,7 +24,7 @@ class LlamaModelSanityCheckTest {
 
         val modelFile = File(
             context.filesDir,
-            "models/$benchmarkModelFileName",
+            "models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         )
 
         assertTrue(
@@ -56,9 +44,7 @@ class LlamaModelSanityCheckTest {
 
             val response = StringBuilder()
 
-            engine.generate(
-                benchmarkPrompt("1+1은?")
-            ).collect { event ->
+            engine.generate("1+1은?").collect { event ->
                 when (event) {
                     is InferenceEvent.Token ->
                         response.append(event.text)
@@ -94,7 +80,7 @@ class LlamaModelSanityCheckTest {
 
         val modelFile = File(
             context.filesDir,
-            "models/$benchmarkModelFileName",
+            "models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         )
 
         assertTrue(
@@ -123,7 +109,7 @@ class LlamaModelSanityCheckTest {
                     ),
                     InferenceMessage(
                         role = InferenceRole.USER,
-                        content = benchmarkPrompt("1+1은?"),
+                        content = "1+1은?",
                     ),
                 )
             ).collect { event ->
@@ -162,7 +148,7 @@ class LlamaModelSanityCheckTest {
 
         val modelFile = File(
             context.filesDir,
-            "models/$benchmarkModelFileName",
+            "models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         )
 
         assertTrue(
@@ -194,9 +180,7 @@ class LlamaModelSanityCheckTest {
                     ),
                     InferenceMessage(
                         role = InferenceRole.USER,
-                        content = benchmarkPrompt(
-                            "내가 좋아하는 과일이 뭐라고 했지?"
-                        ),
+                        content = "내가 좋아하는 과일이 뭐라고 했지?",
                     ),
                 )
             ).collect { event ->
@@ -239,7 +223,7 @@ class LlamaModelSanityCheckTest {
 
         val modelFile = File(
             context.filesDir,
-            "models/$benchmarkModelFileName",
+            "models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         )
 
         assertTrue(
@@ -285,7 +269,7 @@ class LlamaModelSanityCheckTest {
 
         val modelFile = File(
             context.filesDir,
-            "models/$benchmarkModelFileName",
+            "models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         )
 
         assertTrue(
@@ -307,9 +291,7 @@ class LlamaModelSanityCheckTest {
             val startedAtNs = SystemClock.elapsedRealtimeNanos()
 
             engine.generate(
-                benchmarkPrompt(
-                    "오늘 하루 종일 정신없이 바빴어. 이제야 좀 쉬네."
-                )
+                "오늘 하루 종일 정신없이 바빴어. 이제야 좀 쉬네."
             ).collect { event ->
                 when (event) {
                     is InferenceEvent.Token -> {
@@ -437,7 +419,7 @@ class LlamaModelSanityCheckTest {
 
         val modelFile = File(
             context.filesDir,
-            "models/$benchmarkModelFileName",
+            "models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         )
 
         assertTrue(
@@ -478,9 +460,7 @@ class LlamaModelSanityCheckTest {
 
             try {
                 engine.generate(
-                    benchmarkPrompt(
-                        "오늘 하루 종일 정신없이 바빴어. 이제야 좀 쉬네."
-                    )
+                    "오늘 하루 종일 정신없이 바빴어. 이제야 좀 쉬네."
                 ).collect { event ->
                     when (event) {
                         is InferenceEvent.Token -> Unit
@@ -546,7 +526,7 @@ class LlamaModelSanityCheckTest {
 
         val modelFile = File(
             context.filesDir,
-            "models/$benchmarkModelFileName",
+            "models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         )
 
         assertTrue(
@@ -557,9 +537,7 @@ class LlamaModelSanityCheckTest {
         val engine = LlamaInferenceEngine(maxTokens = 192)
 
         val prompt =
-            benchmarkPrompt(
-                "오늘 하루 종일 정신없이 바빴어. 이제야 좀 쉬네."
-            )
+            "오늘 하루 종일 정신없이 바빴어. 이제야 좀 쉬네."
 
         try {
             engine.loadModel(modelFile.absolutePath)
@@ -735,4 +713,3 @@ class LlamaModelSanityCheckTest {
         }
 
 }
-
