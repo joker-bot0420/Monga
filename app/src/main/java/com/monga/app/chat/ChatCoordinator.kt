@@ -8,7 +8,6 @@ import kotlinx.coroutines.CancellationException
 import com.monga.app.inference.InferenceMessage
 import com.monga.app.inference.InferenceRole
 import com.monga.app.inference.InferenceState
-import kotlinx.coroutines.sync.Mutex
 
 sealed interface ChatResult {
     data object Completed : ChatResult
@@ -22,25 +21,7 @@ class ChatCoordinator(
     private val inferenceEngine: InferenceEngine,
     private val systemPromptProvider: SystemPromptProvider,
 ) {
-
-    private val sendMutex = Mutex()
-
     suspend fun send(
-        conversationId: Long,
-        content: String,
-        onToken: (String) -> Unit = {},
-    ): ChatResult {
-        if (content.isBlank()) return ChatResult.Ignored
-        if (!sendMutex.tryLock()) return ChatResult.Ignored
-
-        return try {
-            sendInternal(conversationId, content, onToken)
-        } finally {
-            sendMutex.unlock()
-        }
-    }
-
-    private suspend fun sendInternal(
         conversationId: Long,
         content: String,
         onToken: (String) -> Unit = {},
@@ -49,6 +30,12 @@ class ChatCoordinator(
         if (text.isEmpty()) {
             return ChatResult.Ignored
         }
+
+        chatStore.saveMessage(
+            conversationId = conversationId,
+            role = MessageRole.USER,
+            content = text,
+        )
 
         val currentState = inferenceEngine.state.value
 
@@ -59,12 +46,6 @@ class ChatCoordinator(
                 )
             )
         }
-
-        chatStore.saveMessage(
-            conversationId = conversationId,
-            role = MessageRole.USER,
-            content = text,
-        )
 
         val messages = listOf(
             InferenceMessage(
