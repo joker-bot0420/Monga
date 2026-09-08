@@ -1045,7 +1045,10 @@ try {
             'prepare-tollgate-task.ps1',
             'run-tollgate-task.ps1',
             'tollgate-result.schema.json',
-            'tollgate-loop-result.schema.json'
+            'tollgate-loop-result.schema.json',
+            'Tollgate.HistoricalRecovery.ps1',
+            'settle-tollgate-history.ps1',
+            'historical-recovery.schema.json'
         ) | ForEach-Object { Join-Path $PSScriptRoot $_ }
         foreach ($protectedFile in $protectedBridgeFiles) {
             if (-not (Test-Path -LiteralPath $protectedFile -PathType Leaf)) {

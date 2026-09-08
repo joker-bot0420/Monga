@@ -3,6 +3,7 @@ param(
     [string]$ResultFile,
     [switch]$DryRun,
     [switch]$Publish,
+    [switch]$HistoricalRecovery,
     [switch]$SelfTest
 )
 
@@ -21,6 +22,7 @@ $reservedMarkers = @(
     '[STOP_REQUIRED]'
 )
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false, $true)
+. (Join-Path $PSScriptRoot 'Tollgate.HistoricalRecovery.ps1')
 
 function Invoke-GhJsonUtf8 {
     param(
@@ -59,6 +61,17 @@ function Invoke-GhJsonUtf8 {
         Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Get-AllIssueCommentsUtf8 {
+    param([Parameter(Mandatory = $true)][string]$Repository, [Parameter(Mandatory = $true)][int]$PrNumber)
+    $all = @()
+    for ($page = 1; $page -le 100; $page++) {
+        $items = @(Invoke-GhJsonUtf8 -Endpoint "repos/$Repository/issues/$PrNumber/comments?per_page=100&page=$page")
+        $all += $items
+        if ($items.Count -lt 100) { return $all }
+    }
+    throw 'Historical comment discovery exceeded 100 pages; refusing an incomplete search.'
 }
 function Fail-Reporter {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -215,7 +228,10 @@ function Format-ReportList {
 }
 
 function New-RenderedComment {
-    param([Parameter(Mandatory = $true)][object]$Record)
+    param(
+        [Parameter(Mandatory = $true)][object]$Record,
+        [string]$SettlementKey
+    )
     $status = [string]$Record.terminal_status
     $result = $Record.final_result
     $summary = ConvertTo-SafeReportText -Text ([string]$result.summary)
@@ -256,6 +272,17 @@ Bridge verification:
 "@
     }
 
+    $testsSection = if ([string]::IsNullOrWhiteSpace($SettlementKey)) { $tests } else {
+@"
+$tests
+
+Historical recovery:
+- The five automatic iterations all returned CONTINUE.
+- MAX_ITERATIONS_REACHED exhausted the automatic budget without satisfying acceptance criteria.
+- Later manual work is out-of-band and is not an additional automatic iteration.
+- Settlement key: $SettlementKey
+"@
+    }
     return @"
 [STOP_REQUIRED]
 
@@ -275,7 +302,7 @@ Changed files:
 $changedFiles
 
 Tests:
-$tests
+$testsSection
 
 User decision required:
 $nextAction
@@ -349,6 +376,33 @@ function Invoke-ReporterSelfTest {
         }
         Write-Output 'REPORTED_DUPLICATE_TEST_OK'
         Write-Output 'ATOMIC_REPORTED_WRITE_TEST_OK'
+
+        $c = Get-HistoricalRecoveryConstants
+        $recovery = [ordered]@{
+            schema_version=1; settlement_kind='historical_recovery'; termination_reason='MAX_ITERATIONS_REACHED'
+            automatic_iterations=5; last_automatic_result='CONTINUE'; requires_user=$true
+            manual_work_is_out_of_band=$true; tollgate_id=$c.TollgateId
+            approval_comment_id=$c.ApprovalCommentId; checkpoint_comment_id=$c.CheckpointCommentId
+            pending_sha256=('a' * 64); iteration_results=@(1..5 | ForEach-Object { [ordered]@{iteration=$_;status='CONTINUE';sha256=('b' * 64)} })
+            base_commit=$c.BaseCommit; base_parent=$c.BaseParent; acceptance_satisfied=$false; decision_required='new approval'
+        }
+        $historical = [pscustomobject]@{
+            schema_version=1; comment_id=$c.ApprovalCommentId; terminal_status='STOP_REQUIRED'; iterations=5
+            finished_at='2026-09-07T06:31:25Z'
+            original_approval=[pscustomobject]@{schema_version=1;repository=$repository;pr_number=23;comment_id=$c.ApprovalCommentId;author=$trustedUser;marker=$approvalMarker;body='TG-AUTO-02-EXT';status='pending'}
+            final_result=[pscustomobject]@{status='STOP_REQUIRED';summary='budget exhausted';requires_user=$true;evidence=@();changed_files=@();tests=@();next_action='new approval'}
+            recovery=$recovery
+        }
+        Assert-HistoricalRecoveryTerminalRecord $historical
+        $settlementKey = Get-HistoricalSettlementKey ('c' * 64)
+        $historicalBody = New-RenderedComment $historical $settlementKey
+        Assert-OnlyLeadingControlMarker $historicalBody '[STOP_REQUIRED]'
+        $issueUrl = "https://api.github.com/repos/$repository/issues/$prNumber"
+        $existing = [pscustomobject]@{id=123;html_url='https://example/123';issue_url=$issueUrl;body=$historicalBody;user=[pscustomobject]@{login=$trustedUser}}
+        if ((Find-HistoricalRecoveryComment @($existing) $settlementKey $historicalBody $trustedUser $issueUrl).id -ne 123) { throw 'Historical comment adoption failed.' }
+        Assert-ReporterPrState ([pscustomobject]@{number=23;state='open';merged_at=$null})
+        Assert-ReporterPrState ([pscustomobject]@{number=23;state='closed';merged_at='2026-09-07T00:31:07Z'}) -HistoricalRecovery
+        Write-Output 'HISTORICAL_RECOVERY_REPORTER_TEST_OK'
     } finally {
         if (Test-Path -LiteralPath $testRoot -PathType Container) {
             Remove-Item -LiteralPath $testRoot -Recurse -Force
@@ -358,7 +412,8 @@ function Invoke-ReporterSelfTest {
 
 try {
     if ($DryRun -and $Publish) { throw '-DryRun and -Publish are mutually exclusive.' }
-    if ($SelfTest -and ($DryRun -or $Publish -or -not [string]::IsNullOrWhiteSpace($ResultFile))) {
+    if ($HistoricalRecovery -and -not ($DryRun -or $Publish)) { throw '-HistoricalRecovery requires -DryRun or -Publish.' }
+    if ($SelfTest -and ($DryRun -or $Publish -or $HistoricalRecovery -or -not [string]::IsNullOrWhiteSpace($ResultFile))) {
         throw '-SelfTest cannot be combined with reporter execution options.'
     }
     if ($SelfTest) { Invoke-ReporterSelfTest; exit 0 }
@@ -409,18 +464,34 @@ try {
 
     $record = ConvertFrom-Json -InputObject $terminalText
     Assert-TerminalRecord -Record $record -RecordPath $resolvedResultFile
+    $hasRecovery = $null -ne $record.PSObject.Properties['recovery']
+    if ($HistoricalRecovery) {
+        if (-not $hasRecovery) { throw 'Historical recovery mode requires a recovery terminal record.' }
+        Assert-HistoricalRecoveryTerminalRecord -Record $record
+    } elseif ($hasRecovery) {
+        throw 'Historical recovery records require explicit -HistoricalRecovery mode.'
+    }
     $commentId = [long]$record.comment_id
     $reportedFile = Join-Path $reportedDirectory "$commentId.json"
-    if (Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $terminalHash) {
+    $alreadyReported = Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $terminalHash
+    if ($alreadyReported -and -not $HistoricalRecovery) {
         Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $commentId"
         exit 0
     }
 
-    $rendered = New-RenderedComment -Record $record
+    $settlementKey = if ($HistoricalRecovery) { Get-HistoricalSettlementKey -TerminalSha256 $terminalHash } else { '' }
+    $rendered = New-RenderedComment -Record $record -SettlementKey $settlementKey
     $expectedMarker = "[$([string]$record.terminal_status)]"
     Assert-OnlyLeadingControlMarker -Rendered $rendered -ExpectedMarker $expectedMarker
     $renderedBytes = $utf8NoBom.GetBytes($rendered)
     $renderedHash = Get-BytesSha256 -Bytes $renderedBytes
+    if ($alreadyReported) {
+        $reportedRecord = Get-Content -LiteralPath $reportedFile -Raw -Encoding utf8 | ConvertFrom-Json
+        Assert-HistoricalReportedRecord -Record $reportedRecord -ApprovalCommentId $commentId `
+            -SettlementKey $settlementKey -RenderedSha256 $renderedHash
+        Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $commentId"
+        exit 0
+    }
     $runtimeDirectory = Join-Path (Join-Path $stateRoot 'runtime/reporter') "$commentId"
     [void](New-Item -ItemType Directory -Path $runtimeDirectory -Force)
     $reportFile = Join-Path $runtimeDirectory 'github-comment.txt'
@@ -445,11 +516,32 @@ try {
         if ($login -cne $trustedUser) { throw 'Authenticated GitHub user is invalid.' }
 
         $pr = Invoke-GhJsonUtf8 -Endpoint "repos/$repository/pulls/$prNumber"
-        if ([string]$pr.state -cne 'open') { throw 'Target PR is not open.' }
-        $commentUrl = (& gh pr comment $prNumber --repo $repository --body-file $reportFile | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $commentUrl -notmatch 'issuecomment-(\d+)$') { throw 'GitHub comment creation failed.' }
-        $githubCommentId = [long]$Matches[1]
-        $comment = Invoke-GhJsonUtf8 -Endpoint "repos/$repository/issues/comments/$githubCommentId"
+        Assert-ReporterPrState -Pr $pr -HistoricalRecovery:$HistoricalRecovery
+
+        $comment = $null
+        if ($HistoricalRecovery) {
+            $comments = @(Get-AllIssueCommentsUtf8 -Repository $repository -PrNumber $prNumber)
+            $comment = Find-HistoricalRecoveryComment -Comments $comments -SettlementKey $settlementKey `
+                -ExpectedBody $rendered -TrustedUser $trustedUser `
+                -ExpectedIssueUrl "https://api.github.com/repos/$repository/issues/$prNumber"
+        }
+        if ($null -eq $comment) {
+            $commentUrl = (& gh pr comment $prNumber --repo $repository --body-file $reportFile | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $commentUrl -notmatch 'issuecomment-(\d+)$') {
+                if ($HistoricalRecovery) {
+                    $comments = @(Get-AllIssueCommentsUtf8 -Repository $repository -PrNumber $prNumber)
+                    $comment = Find-HistoricalRecoveryComment -Comments $comments -SettlementKey $settlementKey `
+                        -ExpectedBody $rendered -TrustedUser $trustedUser `
+                        -ExpectedIssueUrl "https://api.github.com/repos/$repository/issues/$prNumber"
+                }
+                if ($null -eq $comment) { throw 'GitHub comment creation had an uncertain or failed outcome; no retry was attempted.' }
+            } else {
+                $githubCommentId = [long]$Matches[1]
+                $comment = Invoke-GhJsonUtf8 -Endpoint "repos/$repository/issues/comments/$githubCommentId"
+            }
+        }
+        $githubCommentId = [long]$comment.id
+        $commentUrl = [string]$comment.html_url
         if ([string]$comment.user.login -cne $trustedUser -or
             [string]$comment.issue_url -cne "https://api.github.com/repos/$repository/issues/$prNumber" -or
             [string]$comment.body -cne $rendered) {
@@ -460,6 +552,10 @@ try {
             approval_comment_id = $commentId; terminal_status = [string]$record.terminal_status
             terminal_record_sha256 = $terminalHash; github_comment_id = $githubCommentId
             github_comment_url = $commentUrl; reported_at = [DateTimeOffset]::UtcNow.ToString('o')
+        }
+        if ($HistoricalRecovery) {
+            $reported.settlement_key = $settlementKey
+            $reported.rendered_comment_sha256 = $renderedHash
         }
         Write-JsonAtomically -Value $reported -Destination $reportedFile
     }

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "settlement_kind", "termination_reason",
+    "automatic_iterations", "last_automatic_result", "requires_user",
+    "manual_work_is_out_of_band", "tollgate_id", "approval_comment_id",
+    "checkpoint_comment_id", "pending_sha256", "iteration_results",
+    "base_commit", "base_parent", "acceptance_satisfied", "decision_required"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "settlement_kind": { "const": "historical_recovery" },
+    "termination_reason": { "const": "MAX_ITERATIONS_REACHED" },
+    "automatic_iterations": { "const": 5 },
+    "last_automatic_result": { "const": "CONTINUE" },
+    "requires_user": { "const": true },
+    "manual_work_is_out_of_band": { "const": true },
+    "tollgate_id": { "const": "TG-AUTO-02-EXT" },
+    "approval_comment_id": { "const": 5563219043 },
+    "checkpoint_comment_id": { "const": 5566069227 },
+    "pending_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "iteration_results": {
+      "type": "array", "minItems": 5, "maxItems": 5,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["iteration", "status", "sha256"],
+        "properties": {
+          "iteration": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "status": { "const": "CONTINUE" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "base_commit": { "const": "84d05941c86a34033749659207d435f6a3349b0f" },
+    "base_parent": { "const": "41fc85474a34a853b2901cf5e77d657fac0976ee" },
+    "acceptance_satisfied": { "const": false },
+    "decision_required": { "type": "string", "minLength": 1 }
+  }
+}

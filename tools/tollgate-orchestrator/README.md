@@ -236,3 +236,44 @@ Codex credentials/filesystem separation and OS network enforcement remain live
 acceptance issues. No live scheduler, production pipeline or publication is part
 of this manual development session. No recovery/reclassification of approval
 `5563219043` is performed or implied.
+
+## Historical recovery settlement (development only)
+
+`tools/tollgate-bridge/settle-tollgate-history.ps1` is a deliberately narrow,
+explicit one-shot recovery path for `TG-AUTO-02-EXT`, approval comment
+`5563219043`. It is not called by the orchestrator and does not add another
+Codex iteration. It accepts only the fixed repository, PR, approval, checkpoint,
+base commit and parent recorded in `Tollgate.HistoricalRecovery.ps1`, and requires
+exactly five valid `CONTINUE` results with non-empty `next_action` values.
+
+The recovery outcome is `STOP_REQUIRED`, not `TOLLGATE_REACHED`. Structured
+metadata records `MAX_ITERATIONS_REACHED`, the pending/result hashes, that the
+five automatic iterations did not satisfy acceptance, and that later manual
+concurrency/scheduler work is out-of-band. The operation writes and validates an
+audit record, preserves the pending file byte-for-byte under `archive/pending/`,
+writes and validates `failed/`, cross-checks the evidence, and only then removes
+the active pending file. Runtime files are read but never rewritten.
+
+Each file write is atomic, but the sequence is not a filesystem transaction.
+After a process or machine failure, pending remains until the last step. An
+audit/archive/terminal subset is accepted only when its hashes and structured
+metadata match freshly validated evidence; conflicts fail closed. A verified
+failed record overlapping pending also blocks the normal executor. Re-running
+the recovery completes a matching partial sequence or reports the already
+settled state without creating a successful result.
+
+The reporter keeps its normal open-PR rule. `-HistoricalRecovery` is explicit
+and accepts only a validated historical recovery terminal targeting merged PR
+`#23`. Before posting it searches trusted top-level comments for a settlement
+key derived from the tollgate, approval ID and terminal SHA-256. An exact body
+is adopted; a key/body collision or multiple matches fails closed. If comment
+creation has an uncertain result, the reporter performs discovery once and does
+not post again. This narrows the duplicate window but cannot provide an absolute
+transaction across GitHub and the local filesystem. A verified comment can be
+adopted after a later retry if local `reported/` writing failed.
+
+Do not apply or publish this recovery merely because the files exist. Actual
+state mutation and GitHub publication require separate explicit user approval.
+The isolated regression test is
+`tools/tollgate-bridge/tests/Test-HistoricalRecovery.ps1`; it uses only
+`tools/tollgate-bridge/tests/state/` and mocked comment objects.
