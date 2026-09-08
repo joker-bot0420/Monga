@@ -144,11 +144,8 @@ class ChatCoordinatorTest {
         assertTrue(result is ChatResult.Failed)
         assertEquals(0, promptBuildCount)
 
-        assertEquals(1, store.savedMessages.size)
-        assertEquals(
-            MessageRole.USER,
-            store.savedMessages.single().role,
-        )
+        // 모델이 준비되지 않으면 사용자 메시지를 저장하지 않는다.
+        assertEquals(0, store.savedMessages.size)
     }
 
     private class StubInferenceEngine(

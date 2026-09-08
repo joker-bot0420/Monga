@@ -31,12 +31,6 @@ class ChatCoordinator(
             return ChatResult.Ignored
         }
 
-        chatStore.saveMessage(
-            conversationId = conversationId,
-            role = MessageRole.USER,
-            content = text,
-        )
-
         val currentState = inferenceEngine.state.value
 
         if (currentState != InferenceState.Ready) {
@@ -46,6 +40,12 @@ class ChatCoordinator(
                 )
             )
         }
+
+        chatStore.saveMessage(
+            conversationId = conversationId,
+            role = MessageRole.USER,
+            content = text,
+        )
 
         val messages = listOf(
             InferenceMessage(
