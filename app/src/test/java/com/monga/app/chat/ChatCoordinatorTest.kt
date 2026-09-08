@@ -15,6 +15,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import com.monga.app.inference.InferenceMessage
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withTimeout
 
 class ChatCoordinatorTest {
 
@@ -144,11 +148,70 @@ class ChatCoordinatorTest {
         assertTrue(result is ChatResult.Failed)
         assertEquals(0, promptBuildCount)
 
-        assertEquals(1, store.savedMessages.size)
-        assertEquals(
-            MessageRole.USER,
-            store.savedMessages.single().role,
+        // 모델이 준비되지 않으면 사용자 메시지를 저장하지 않는다.
+        assertEquals(0, store.savedMessages.size)
+    }
+
+    @Test
+    fun concurrentSendIsIgnoredAndNextSendWorksAfterCompletion() = runBlocking {
+        val store = FakeChatStore()
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var generationCount = 0
+
+        val engine = object : InferenceEngine {
+            private val _state = MutableStateFlow<InferenceState>(
+                InferenceState.Ready
+            )
+            override val state: StateFlow<InferenceState> = _state
+
+            override suspend fun loadModel(path: String) = Unit
+
+            override fun generate(
+                messages: List<InferenceMessage>,
+            ): Flow<InferenceEvent> = flow {
+                generationCount++
+                started.complete(Unit)
+                release.await()
+                emit(InferenceEvent.Token("reply"))
+                emit(InferenceEvent.Completed)
+            }
+
+            override fun cancel() = Unit
+            override suspend fun unload() = Unit
+        }
+
+        val coordinator = ChatCoordinator(
+            chatStore = store,
+            inferenceEngine = engine,
+            systemPromptProvider = systemPromptProvider,
         )
+
+        withTimeout(5_000) {
+            val first = async {
+                coordinator.send(1L, "first")
+            }
+
+            // 첫 번째 생성이 실제로 시작할 때까지 기다린다.
+            started.await()
+
+            // 첫 번째 생성이 멈춰 있는 동안 두 번째 요청을 보낸다.
+            val second = coordinator.send(1L, "second")
+
+            assertEquals(ChatResult.Ignored, second)
+            assertEquals(1, generationCount)
+            assertEquals(1, store.savedMessages.size)
+
+            // 첫 번째 생성을 완료시킨다.
+            release.complete(Unit)
+            assertEquals(ChatResult.Completed, first.await())
+
+            // 잠금이 해제됐으므로 다음 요청은 정상 실행된다.
+            val third = coordinator.send(1L, "third")
+
+            assertEquals(ChatResult.Completed, third)
+            assertEquals(2, generationCount)
+        }
     }
 
     private class StubInferenceEngine(

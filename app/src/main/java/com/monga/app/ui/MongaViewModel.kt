@@ -16,6 +16,7 @@ import com.monga.app.data.model.ModelPreferences
 import com.monga.app.data.model.ModelStore
 import com.monga.app.inference.LlamaModelLoader
 import com.monga.app.util.epochRange
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MongaViewModel(
     private val repository: MongaRepository,
@@ -49,6 +50,8 @@ class MongaViewModel(
     val streamingDraft: StateFlow<String> = _streamingDraft
     private val _isGenerating = MutableStateFlow(false)
     val isGenerating: StateFlow<Boolean> = _isGenerating
+
+    private val sendInProgress = AtomicBoolean(false)
 
     val selectedModelName = modelPreferences.selectedModelName
         .stateIn(
@@ -90,16 +93,22 @@ class MongaViewModel(
     fun newConversation() = viewModelScope.launch { selectedConversation.value = repository.createConversation() }
     fun selectConversation(id: Long) { selectedConversation.value = id }
 
-    fun send(text: String) = viewModelScope.launch {
-        val id = selectedConversation.value
-            ?: repository.createConversation().also {
-                selectedConversation.value = it
-            }
+    fun send(text: String) {
+        if (text.isBlank()) return
 
-            _streamingDraft.value = ""
-            _isGenerating.value = true
+        // Only one send operation may run at a time.
+        if (!sendInProgress.compareAndSet(false, true)) return
 
+        _streamingDraft.value = ""
+        _isGenerating.value = true
+
+        viewModelScope.launch {
             try {
+                val id = selectedConversation.value
+                    ?: repository.createConversation().also {
+                        selectedConversation.value = it
+                    }
+
                 when (
                     val result = chatCoordinator.send(
                         conversationId = id,
@@ -124,8 +133,10 @@ class MongaViewModel(
             } finally {
                 _streamingDraft.value = ""
                 _isGenerating.value = false
+                sendInProgress.set(false)
             }
         }
+    }
 
     fun cancelGeneration() {
         chatCoordinator.cancel()
