@@ -22,7 +22,6 @@ $reservedMarkers = @(
     '[STOP_REQUIRED]'
 )
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false, $true)
-. (Join-Path $PSScriptRoot 'Tollgate.HistoricalRecovery.ps1')
 
 function Invoke-GhJsonUtf8 {
     param(
@@ -388,8 +387,8 @@ function Invoke-ReporterSelfTest {
         }
         $historical = [pscustomobject]@{
             schema_version=1; comment_id=$c.ApprovalCommentId; terminal_status='STOP_REQUIRED'; iterations=5
-            finished_at='2026-09-07T06:31:25Z'
-            original_approval=[pscustomobject]@{schema_version=1;repository=$repository;pr_number=23;comment_id=$c.ApprovalCommentId;author=$trustedUser;marker=$approvalMarker;body='TG-AUTO-02-EXT';status='pending'}
+            finished_at='2026-09-07T06:31:25.0000000+00:00'
+            original_approval=[pscustomobject]@{schema_version=1;repository=$repository;pr_number=23;comment_id=$c.ApprovalCommentId;author=$trustedUser;created_at=$c.ApprovalCommentCreatedAt;marker=$approvalMarker;body='TG-AUTO-02-EXT';status='pending'}
             final_result=[pscustomobject]@{status='STOP_REQUIRED';summary='budget exhausted';requires_user=$true;evidence=@();changed_files=@();tests=@();next_action='new approval'}
             recovery=$recovery
         }
@@ -415,6 +414,9 @@ try {
     if ($HistoricalRecovery -and -not ($DryRun -or $Publish)) { throw '-HistoricalRecovery requires -DryRun or -Publish.' }
     if ($SelfTest -and ($DryRun -or $Publish -or $HistoricalRecovery -or -not [string]::IsNullOrWhiteSpace($ResultFile))) {
         throw '-SelfTest cannot be combined with reporter execution options.'
+    }
+    if ($HistoricalRecovery -or $SelfTest) {
+        . (Join-Path $PSScriptRoot 'Tollgate.HistoricalRecovery.ps1')
     }
     if ($SelfTest) { Invoke-ReporterSelfTest; exit 0 }
 

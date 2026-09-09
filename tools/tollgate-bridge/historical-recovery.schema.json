@@ -20,9 +20,16 @@
     "tollgate_id": { "const": "TG-AUTO-02-EXT" },
     "approval_comment_id": { "const": 5563219043 },
     "checkpoint_comment_id": { "const": 5566069227 },
-    "pending_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "pending_sha256": { "const": "c1a38025d51c0df53e41fb69dfbea7c259812053d7e03af06f496f267b827fd5" },
     "iteration_results": {
       "type": "array", "minItems": 5, "maxItems": 5,
+      "prefixItems": [
+        { "properties": { "iteration": { "const": 1 }, "sha256": { "const": "6611bd33a12d587170204a4d16fc0341672cef3ca2b919d36a17ef73ca381791" } } },
+        { "properties": { "iteration": { "const": 2 }, "sha256": { "const": "f85c288a09d93f1e21dff74937950a75c40d725b2ca56478429b71c335aed1eb" } } },
+        { "properties": { "iteration": { "const": 3 }, "sha256": { "const": "650c804eac80a83ae16be13f943c70fec7e69ef4f374dbed42e9a6247c733d1a" } } },
+        { "properties": { "iteration": { "const": 4 }, "sha256": { "const": "0e68ae8aa3f2e9c2fe145e678026f6c6d6d805772d45f43f85e5de5b6ae0d0e4" } } },
+        { "properties": { "iteration": { "const": 5 }, "sha256": { "const": "0a5302bccc6db79220056fd25bbb4fe340b70bdc25cf3fe9a1fe861f32ed7d57" } } }
+      ],
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["iteration", "status", "sha256"],

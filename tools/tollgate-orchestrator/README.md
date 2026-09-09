@@ -246,6 +246,13 @@ Codex iteration. It accepts only the fixed repository, PR, approval, checkpoint,
 base commit and parent recorded in `Tollgate.HistoricalRecovery.ps1`, and requires
 exactly five valid `CONTINUE` results with non-empty `next_action` values.
 
+Production recovery verifies the exact-byte SHA-256 values captured by the
+2026-09-08 read-only audit. The pending envelope and every iteration result are
+fixed in the recovery manifest constants. The approval and checkpoint are also
+bound to fixed IDs, trusted author, creation timestamp and UTF-8 body SHA-256.
+Synthetic tests must supply a separate explicit evidence manifest and cannot
+replace the production manifest. Runtime inputs are never re-serialized.
+
 The recovery outcome is `STOP_REQUIRED`, not `TOLLGATE_REACHED`. Structured
 metadata records `MAX_ITERATIONS_REACHED`, the pending/result hashes, that the
 five automatic iterations did not satisfy acceptance, and that later manual
@@ -261,6 +268,22 @@ metadata match freshly validated evidence; conflicts fail closed. A verified
 failed record overlapping pending also blocks the normal executor. Re-running
 the recovery completes a matching partial sequence or reports the already
 settled state without creating a successful result.
+
+Recovery acquires the state-root orchestrator lock used by the pipeline and
+then the approval-specific task lock. Direct `-RunPending` execution holds the
+task lock for its entire Codex and terminal-transition interval. Recovery holds
+both locks from evidence validation through final cross-check and pending
+removal, always in orchestrator-then-task order. Contention fails without a
+lifecycle write. These OS file-handle locks cover cooperating processes on the
+same Windows host and filesystem only; lock files are not deleted or stolen.
+Recovery also rejects reparse points in its state path.
+
+The audit fixes one settlement timestamp and the expected terminal SHA-256.
+Re-entry reconstructs and validates the entire terminal byte sequence,
+including original approval, timestamp and complete final result, before
+pending may be removed. The JSON schema documents recovery metadata; the
+PowerShell validators and immutable evidence manifest are authoritative at
+runtime.
 
 The reporter keeps its normal open-PR rule. `-HistoricalRecovery` is explicit
 and accepts only a validated historical recovery terminal targeting merged PR

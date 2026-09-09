@@ -7,6 +7,7 @@ param(
     [switch]$RunPending,
     [switch]$LifecycleSelfTest,
     [switch]$Utf8TransportSelfTest,
+    [string]$SyntheticStateRoot,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 300
 )
@@ -18,6 +19,7 @@ $repository = 'joker-bot0420/Monga'
 $prNumber = 23
 $trustedUser = 'joker-bot0420'
 $triggerMarker = '[TOLLGATE_APPROVED]'
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'tollgate-orchestrator/Orchestrator.Lock.ps1')
 
 function Fail-Executor {
     param(
@@ -970,6 +972,15 @@ try {
 
     $repositoryRoot = Get-NormalizedPath -Path (($repositoryRootOutput | Out-String).Trim())
     $stateRoot = Join-Path $repositoryRoot '.tollgate-local'
+    if (-not [string]::IsNullOrWhiteSpace($SyntheticStateRoot)) {
+        if (-not $RunPending) { throw '-SyntheticStateRoot is test-only and requires -RunPending.' }
+        $candidateState = Get-NormalizedPath $SyntheticStateRoot
+        $allowedTestRoot = (Get-NormalizedPath (Join-Path $PSScriptRoot 'tests/state')) + [IO.Path]::DirectorySeparatorChar
+        if (-not ($candidateState + [IO.Path]::DirectorySeparatorChar).StartsWith($allowedTestRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw '-SyntheticStateRoot must be beneath tools/tollgate-bridge/tests/state/.'
+        }
+        $stateRoot = $candidateState
+    }
     $pendingDirectory = Join-Path $stateRoot 'pending'
     $completedDirectory = Join-Path $stateRoot 'completed'
     $failedDirectory = Join-Path $stateRoot 'failed'
@@ -1022,6 +1033,13 @@ try {
         $envelope = Get-Content -LiteralPath $resolvedTaskFile -Raw -Encoding utf8 | ConvertFrom-Json
         Assert-Envelope -Envelope $envelope -EnvelopePath $resolvedTaskFile
         $commentId = [long]$envelope.comment_id
+        $taskLock = $null
+        try {
+        $taskLock = Enter-TollgateOrchestratorLock -LockPath (Join-Path $stateRoot "orchestrator/task-$commentId.lock")
+        # Re-read and revalidate after lock acquisition. This closes the selection/lock TOCTOU window.
+        $envelope = Get-Content -LiteralPath $resolvedTaskFile -Raw -Encoding utf8 | ConvertFrom-Json
+        Assert-Envelope -Envelope $envelope -EnvelopePath $resolvedTaskFile
+        if ([long]$envelope.comment_id -ne $commentId) { throw 'Pending task identity changed before execution.' }
         $terminalFileName = "$commentId.json"
         if ((Test-Path -LiteralPath (Join-Path $completedDirectory $terminalFileName) -PathType Leaf) -or
             (Test-Path -LiteralPath (Join-Path $failedDirectory $terminalFileName) -PathType Leaf)) {
@@ -1046,6 +1064,7 @@ try {
             'run-tollgate-task.ps1',
             'tollgate-result.schema.json',
             'tollgate-loop-result.schema.json',
+            'report-tollgate-result.ps1',
             'Tollgate.HistoricalRecovery.ps1',
             'settle-tollgate-history.ps1',
             'historical-recovery.schema.json'
@@ -1138,6 +1157,9 @@ try {
 
         # Defensive guard: all non-terminal paths above preserve the original pending envelope.
         throw 'MAX_ITERATIONS_REACHED; pending task was preserved.'
+        } finally {
+            if ($null -ne $taskLock) { $taskLock.Dispose() }
+        }
     }
 
     if ($SyntheticLoopSmoke) {
