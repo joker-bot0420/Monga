@@ -21,6 +21,7 @@ import androidx.navigation.compose.rememberNavController
 import com.monga.app.data.local.CoreMemory
 import com.monga.app.data.local.Message
 import java.time.format.DateTimeFormatter
+import androidx.compose.runtime.saveable.rememberSaveable
 
 private enum class Destination(val route: String, val label: String) {
     Chat("chat", "Chat"), Core("core", "Core Memory"), History("history", "History"), Settings("settings", "Settings"), Backup("backup", "Backup")
@@ -65,14 +66,27 @@ fun MongaApp(vm: MongaViewModel) {
     val messages by vm.messages.collectAsStateWithLifecycle()
     val streamingDraft by vm.streamingDraft.collectAsStateWithLifecycle()
     val isGenerating by vm.isGenerating.collectAsStateWithLifecycle()
-    var input by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val chatDraft by vm.chatDraft.collectAsStateWithLifecycle()
+
+    Column(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = vm::newConversation) { Text("새 대화") }
-            conversations.take(3).forEach { c -> TextButton(onClick = { vm.selectConversation(c.id) }) { Text(c.title) } }
+            conversations.take(3).forEach { c ->
+                TextButton(onClick = { vm.selectConversation(c.id) }) {
+                    Text(c.title)
+                }
+            }
         }
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+        LazyColumn(
+            Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             items(messages, key = { it.id }) { MessageCard(it) }
+
             if (streamingDraft.isNotEmpty()) {
                 item(key = "streaming-assistant") {
                     Card(Modifier.fillMaxWidth()) {
@@ -83,24 +97,32 @@ fun MongaApp(vm: MongaViewModel) {
                     }
                 }
             }
-            if (messages.isEmpty()) item { Text("Monga와 오프라인 대화를 시작하세요.") }
+
+            if (messages.isEmpty()) {
+                item {
+                    Text("Monga와 오프라인 대화를 시작하세요.")
+                }
+            }
         }
+
         Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(input, { input = it }, Modifier.weight(1f), label = { Text("메시지") })
+            OutlinedTextField(
+                value = chatDraft.text,
+                onValueChange = vm::editChatDraft,
+                modifier = Modifier.weight(1f),
+                label = { Text("메시지") },
+            )
+
             Spacer(Modifier.width(8.dp))
+
             if (isGenerating) {
-                Button(
-                    onClick = vm::cancelGeneration,
-                ) {
+                Button(onClick = vm::cancelGeneration) {
                     Text("중지")
                 }
             } else {
                 Button(
-                    onClick = {
-                        vm.send(input)
-                        input = ""
-                    },
-                    enabled = input.isNotBlank(),
+                    onClick = vm::sendChatDraft,
+                    enabled = chatDraft.text.isNotBlank(),
                 ) {
                     Text("전송")
                 }
@@ -108,6 +130,7 @@ fun MongaApp(vm: MongaViewModel) {
         }
     }
 }
+
 
 @Composable private fun MessageCard(message: Message) {
     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) { Text(message.role.name, fontWeight = FontWeight.Bold); Text(message.content) } }

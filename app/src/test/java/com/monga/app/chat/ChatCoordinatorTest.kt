@@ -124,6 +124,90 @@ class ChatCoordinatorTest {
     }
 
     @Test
+    fun savedCallbackFiresOnceAfterUserPersistence() = runBlocking {
+        val store = FakeChatStore()
+        val engine = StubInferenceEngine(
+            InferenceEvent.Token("reply"),
+            InferenceEvent.Completed,
+        )
+        val coordinator = ChatCoordinator(
+            chatStore = store,
+            inferenceEngine = engine,
+            systemPromptProvider = systemPromptProvider,
+        )
+
+        val savedCallbacks = mutableListOf<String>()
+        val tokenCallbacks = mutableListOf<String>()
+
+        val result = coordinator.send(
+            conversationId = 1L,
+            content = "  테스트  ",
+            onUserMessageSaved = { savedText ->
+                // 콜백이 도착했을 때 USER 메시지는 이미 저장되어 있어야 한다.
+                assertEquals(1, store.savedMessages.size)
+                assertEquals(
+                    MessageRole.USER,
+                    store.savedMessages.single().role,
+                )
+                assertEquals(savedText, store.savedMessages.single().content)
+                savedCallbacks += savedText
+            },
+        ) { draft ->
+            // 기존 trailing lambda가 계속 토큰 콜백으로 동작하는지도 확인한다.
+            tokenCallbacks += draft
+        }
+
+        assertEquals(ChatResult.Completed, result)
+        assertEquals(listOf("테스트"), savedCallbacks)
+        assertEquals(listOf("reply"), tokenCallbacks)
+        assertEquals(2, store.savedMessages.size)
+    }
+
+    @Test
+    fun failedUserPersistenceDoesNotInvokeCallback() = runBlocking {
+        val backingStore = FakeChatStore()
+        val failure = IllegalStateException("save failed")
+        var callbackCount = 0
+        var promptBuildCount = 0
+
+        val failingStore = object : ChatStore by backingStore {
+            override suspend fun saveMessage(
+                conversationId: Long,
+                role: MessageRole,
+                content: String,
+            ) {
+                throw failure
+            }
+        }
+
+        val coordinator = ChatCoordinator(
+            chatStore = failingStore,
+            inferenceEngine = StubInferenceEngine(
+                InferenceEvent.Completed,
+            ),
+            systemPromptProvider = SystemPromptProvider {
+                promptBuildCount++
+                ""
+            },
+        )
+
+        // 이 테스트는 콜백 계약만 확인한다.
+        // 저장 예외가 Failed로 반환되든 전파되든, 콜백은 호출되면 안 된다.
+        val outcome = coordinator.send(
+            conversationId = 1L,
+            content = "테스트",
+            onUserMessageSaved = { callbackCount++ },
+        )
+
+        assertTrue(outcome is ChatResult.Failed)
+        assertEquals(failure, (outcome as ChatResult.Failed).cause)
+
+        assertEquals(0, callbackCount)
+        assertTrue(backingStore.savedMessages.isEmpty())
+        assertEquals(0, promptBuildCount)
+    }
+
+    @Test
     fun nonReadyEngineSkipsSystemPromptBuild() = runBlocking {
         val store = FakeChatStore()
         val engine = StubInferenceEngine()
