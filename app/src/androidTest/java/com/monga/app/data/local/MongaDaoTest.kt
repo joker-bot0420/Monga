@@ -10,6 +10,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 @RunWith(AndroidJUnit4::class)
 class MongaDaoTest {
@@ -117,4 +122,66 @@ class MongaDaoTest {
             assertEquals("start", memories[1].title)
         }
 
+    @Test
+    fun coreMemoriesAreInsertedUpdatedDeletedAndObserved() = runBlocking {
+        val updates = Channel<List<CoreMemory>>(Channel.RENDEZVOUS)
+
+        val observer = launch {
+            dao.observeCoreMemories().collect { memories ->
+                updates.send(memories)
+            }
+        }
+
+        suspend fun nextUpdate(): List<CoreMemory> =
+            withTimeout(5_000L) {
+                updates.receive()
+            }
+
+        try {
+            // 처음에는 기억이 없다.
+            assertEquals(
+                emptyList<CoreMemory>(),
+                nextUpdate(),
+            )
+
+            // 추가: 생성된 ID와 저장된 내용이 Flow에 반영된다.
+            val original = CoreMemory(
+                content = "first memory",
+                createdAt = 100L,
+                updatedAt = 100L,
+            )
+
+            val id = dao.insertCoreMemory(original)
+            val saved = original.copy(id = id)
+
+            assertEquals(
+                listOf(saved),
+                nextUpdate(),
+            )
+
+            // 수정: ID와 생성 시각을 유지하고 내용과 수정 시각을 갱신한다.
+            val revised = saved.copy(
+                content = "revised memory",
+                updatedAt = 200L,
+            )
+
+            dao.updateCoreMemory(revised)
+
+            assertEquals(
+                listOf(revised),
+                nextUpdate(),
+            )
+
+            // 삭제: 해당 기억이 목록에서 사라진다.
+            dao.deleteCoreMemory(revised)
+
+            assertEquals(
+                emptyList<CoreMemory>(),
+                nextUpdate(),
+            )
+        } finally {
+            observer.cancelAndJoin()
+            updates.close()
+        }
+    }
 }
