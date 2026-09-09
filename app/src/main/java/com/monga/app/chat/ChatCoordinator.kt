@@ -28,13 +28,23 @@ class ChatCoordinator(
     suspend fun send(
         conversationId: Long,
         content: String,
+        onUserMessageSaved: (String) -> Unit = {},
         onToken: (String) -> Unit = {},
     ): ChatResult {
         if (content.isBlank()) return ChatResult.Ignored
         if (!sendMutex.tryLock()) return ChatResult.Ignored
 
         return try {
-            sendInternal(conversationId, content, onToken)
+            sendInternal(
+                conversationId = conversationId,
+                content = content,
+                onToken = onToken,
+                onUserMessageSaved = onUserMessageSaved,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            ChatResult.Failed(t)
         } finally {
             sendMutex.unlock()
         }
@@ -44,6 +54,7 @@ class ChatCoordinator(
         conversationId: Long,
         content: String,
         onToken: (String) -> Unit = {},
+        onUserMessageSaved: (String) -> Unit = {},
     ): ChatResult {
         val text = content.trim()
         if (text.isEmpty()) {
@@ -65,6 +76,7 @@ class ChatCoordinator(
             role = MessageRole.USER,
             content = text,
         )
+        onUserMessageSaved(text)
 
         val messages = listOf(
             InferenceMessage(

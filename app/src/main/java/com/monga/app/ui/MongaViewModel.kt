@@ -53,6 +53,24 @@ class MongaViewModel(
 
     private val sendInProgress = AtomicBoolean(false)
 
+    private val chatDraftState = ChatDraftState()
+    val chatDraft: StateFlow<ChatDraft> = chatDraftState.draft
+
+    fun editChatDraft(text: String) {
+        chatDraftState.edit(text)
+    }
+
+    fun sendChatDraft() {
+        val submitted = chatDraftState.snapshot()
+
+        send(
+            text = submitted.text,
+            onUserMessageSaved = {
+                chatDraftState.clearIfUnchanged(submitted)
+            },
+        )
+    }
+
     val selectedModelName = modelPreferences.selectedModelName
         .stateIn(
             viewModelScope,
@@ -93,7 +111,10 @@ class MongaViewModel(
     fun newConversation() = viewModelScope.launch { selectedConversation.value = repository.createConversation() }
     fun selectConversation(id: Long) { selectedConversation.value = id }
 
-    fun send(text: String) {
+    fun send(
+        text: String,
+        onUserMessageSaved: (String) -> Unit = {},
+    ) {
         if (text.isBlank()) return
 
         // Only one send operation may run at a time.
@@ -102,7 +123,9 @@ class MongaViewModel(
         _streamingDraft.value = ""
         _isGenerating.value = true
 
-        viewModelScope.launch {
+        val sendJob = viewModelScope.launch(
+            start = kotlinx.coroutines.CoroutineStart.LAZY,
+        ) {
             try {
                 val id = selectedConversation.value
                     ?: repository.createConversation().also {
@@ -116,6 +139,7 @@ class MongaViewModel(
                         onToken = { draft ->
                             _streamingDraft.value = draft
                         },
+                        onUserMessageSaved = onUserMessageSaved,
                     )
                 ) {
                     ChatResult.Completed,
@@ -130,12 +154,26 @@ class MongaViewModel(
                                         ?: "알 수 없는 오류")
                     }
                 }
-            } finally {
-                _streamingDraft.value = ""
-                _isGenerating.value = false
-                sendInProgress.set(false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                notice.value =
+                    "응답 생성 실패: " +
+                            (t.message
+                                ?: t::class.simpleName
+                                ?: "알 수 없는 오류")
             }
         }
+
+        // Register cleanup before the coroutine is allowed to start.
+        // This also runs when the job is cancelled before its body executes.
+        sendJob.invokeOnCompletion {
+            _streamingDraft.value = ""
+            _isGenerating.value = false
+            sendInProgress.set(false)
+        }
+
+        sendJob.start()
     }
 
     fun cancelGeneration() {
