@@ -33,13 +33,49 @@ class LlamaNativeBridgeTest {
     }
 
     @Test
-    fun coreMemoryUsesLoadedModelTokenizerAndFitsFinalPrompt() = runBlocking {
+    fun lfm2_5_1_2b_coreMemoryCompatibility() = runBlocking {
+        verifyCoreMemoryCompatibility(
+            "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+        )
+    }
+
+    @Test
+    fun qwen3_1_7b_coreMemoryCompatibility() = runBlocking {
+        verifyCoreMemoryCompatibility(
+            "Qwen3-1.7B-Q4_K_M.gguf",
+        )
+    }
+
+    @Test
+    fun qwen3_0_6b_coreMemoryCompatibility() = runBlocking {
+        verifyCoreMemoryCompatibility(
+            "Qwen_Qwen3-0.6B-Q4_K_M.gguf",
+        )
+    }
+
+    @Test
+    fun gemma3_1b_coreMemoryCompatibility() = runBlocking {
+        verifyCoreMemoryCompatibility(
+            "gemma-3-1b-it-Q4_K_M.gguf",
+        )
+    }
+
+    @Test
+    fun qwen2_5_0_5b_coreMemoryCompatibility() = runBlocking {
+        verifyCoreMemoryCompatibility(
+            "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        )
+    }
+
+    private suspend fun verifyCoreMemoryCompatibility(
+        modelFileName: String,
+    ) {
         val context =
             InstrumentationRegistry.getInstrumentation().targetContext
 
         val modelFile = File(
             context.filesDir,
-            "models/LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+            "models/$modelFileName",
         )
 
         assertTrue(
