@@ -30,13 +30,26 @@ class LlamaInferenceEngine(
 
     private val cancelled = AtomicBoolean(false)
 
+    private var loadedModelArchitecture: String? = null
+
+    private fun isQwen3Model(): Boolean =
+        loadedModelArchitecture?.startsWith(
+            "qwen3",
+            ignoreCase = true,
+        ) == true
+
     override suspend fun loadModel(path: String) {
         _state.value = InferenceState.Loading
 
         try {
+            loadedModelArchitecture = null
+
             val loaded = LlamaNativeBridge.nativeLoadModel(path)
 
             if (loaded) {
+                loadedModelArchitecture =
+                    LlamaNativeBridge.nativeModelArchitecture()
+
                 _state.value = InferenceState.Ready
             } else {
                 _state.value = InferenceState.Error(
@@ -91,6 +104,24 @@ class LlamaInferenceEngine(
         }
 
         val workingMessages = messages.toMutableList()
+
+        if (isQwen3Model()) {
+            val lastUserIndex =
+                workingMessages.indexOfLast {
+                    it.role == InferenceRole.USER
+                }
+
+            if (lastUserIndex >= 0) {
+                val message = workingMessages[lastUserIndex]
+
+                if (!message.content.trimEnd().endsWith("/no_think")) {
+                    workingMessages[lastUserIndex] =
+                        message.copy(
+                            content = "${message.content.trimEnd()} /no_think"
+                        )
+                }
+            }
+        }
 
         var roles = workingMessages
             .map { it.role.wireValue }
@@ -294,6 +325,7 @@ class LlamaInferenceEngine(
         LlamaNativeBridge.nativeFinishGeneration()
         LlamaNativeBridge.nativeUnloadModel()
 
+        loadedModelArchitecture = null
         _state.value = InferenceState.NoModel
     }
 }

@@ -13,6 +13,8 @@ object LlamaNativeBridge {
 
     external fun nativeModelContextSize(): Int
 
+    external fun nativeModelArchitecture(): String?
+
     external fun nativeStartGeneration(
         prompt: String,
         maxTokens: Int,

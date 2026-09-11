@@ -428,6 +428,43 @@ Java_com_monga_app_inference_LlamaNativeBridge_nativeCountChatTokens(
     return tokenCount > 0 ? tokenCount : -1;
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_monga_app_inference_LlamaNativeBridge_nativeModelArchitecture(
+        JNIEnv *env, jobject) {
+    std::lock_guard<std::mutex> lock(g_modelMutex);
+
+    if (g_model == nullptr) {
+        return nullptr;
+    }
+
+    const int32_t requiredLength =
+            llama_model_meta_val_str(
+                    g_model,
+                    "general.architecture",
+                    nullptr,
+                    0);
+
+    if (requiredLength < 0) {
+        return nullptr;
+    }
+
+    std::vector<char> buffer(
+            static_cast<size_t>(requiredLength) + 1);
+
+    const int32_t written =
+            llama_model_meta_val_str(
+                    g_model,
+                    "general.architecture",
+                    buffer.data(),
+                    buffer.size());
+
+    if (written < 0) {
+        return nullptr;
+    }
+
+    return env->NewStringUTF(buffer.data());
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_monga_app_inference_LlamaNativeBridge_nativeStartChatGeneration(
     JNIEnv *env, jobject, jobjectArray roles, jobjectArray contents,
