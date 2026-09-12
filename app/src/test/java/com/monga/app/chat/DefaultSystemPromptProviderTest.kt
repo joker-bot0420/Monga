@@ -7,13 +7,10 @@ import org.junit.Test
 class DefaultSystemPromptProviderTest {
 
     @Test
-    fun buildsPromptWithPersonaAndCoreMemoryInSeparateSections() = runBlocking {
+    fun buildsPromptWithPersonaAndUserMemoryInterpretationRules() = runBlocking {
         val provider = DefaultSystemPromptProvider(
             personaProvider = PersonaProvider {
                 "- 친근하게 대화한다."
-            },
-            coreMemoryProvider = CoreMemoryProvider {
-                "- 사용자는 녹차를 좋아한다."
             },
         )
 
@@ -24,11 +21,14 @@ class DefaultSystemPromptProviderTest {
         assertTrue(prompt.contains("- 친근하게 대화한다."))
         assertTrue(prompt.contains("규칙:"))
         assertTrue(prompt.contains("[사용자 기억]"))
-        assertTrue(prompt.contains("- 사용자는 녹차를 좋아한다."))
-
+        assertTrue(
+            prompt.contains(
+                "[사용자 기억]은 그 메시지를 보낸 user 자신에 관한 배경 정보다."
+            )
+        )
         assertTrue(
             prompt.indexOf("[페르소나]") <
-                    prompt.indexOf("[사용자 기억]")
+                    prompt.indexOf("규칙:")
         )
     }
 }
