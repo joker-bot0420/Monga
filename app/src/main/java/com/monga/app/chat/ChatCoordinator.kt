@@ -21,7 +21,7 @@ class ChatCoordinator(
     private val chatStore: ChatStore,
     private val inferenceEngine: InferenceEngine,
     private val systemPromptProvider: SystemPromptProvider,
-    private val coreMemoryProvider: CoreMemoryProvider,
+    private val coreMemoryProvider: CoreMemoryProvider = CoreMemoryProvider { "" },
 ) {
 
     private val sendMutex = Mutex()
