@@ -44,23 +44,25 @@ class MongaApplication : Application() {
     }
 
     val chatCoordinator by lazy {
+        val coreMemoryProvider = DefaultCoreMemoryProvider(
+            coreMemories = repository.coreMemories,
+            tokenCounter = { text ->
+                LlamaNativeBridge.nativeCountChatTokens(
+                    roles = arrayOf(
+                        InferenceRole.USER.wireValue,
+                    ),
+                    contents = arrayOf(text),
+                )
+            },
+        )
+
         ChatCoordinator(
             chatStore = repository,
             inferenceEngine = inferenceEngine,
             systemPromptProvider = DefaultSystemPromptProvider(
                 personaProvider = DefaultPersonaProvider(),
-                coreMemoryProvider = DefaultCoreMemoryProvider(
-                    coreMemories = repository.coreMemories,
-                    tokenCounter = { text ->
-                        LlamaNativeBridge.nativeCountChatTokens(
-                            roles = arrayOf(
-                                InferenceRole.SYSTEM.wireValue,
-                            ),
-                            contents = arrayOf(text),
-                        )
-                    },
-                ),
             ),
+            coreMemoryProvider = coreMemoryProvider,
         )
     }
 }
