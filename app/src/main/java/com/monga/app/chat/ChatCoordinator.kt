@@ -21,6 +21,7 @@ class ChatCoordinator(
     private val chatStore: ChatStore,
     private val inferenceEngine: InferenceEngine,
     private val systemPromptProvider: SystemPromptProvider,
+    private val coreMemoryProvider: CoreMemoryProvider,
 ) {
 
     private val sendMutex = Mutex()
@@ -78,12 +79,7 @@ class ChatCoordinator(
         )
         onUserMessageSaved(text)
 
-        val messages = listOf(
-            InferenceMessage(
-                role = InferenceRole.SYSTEM,
-                content = systemPromptProvider.buildPrompt(),
-            )
-        ) + chatStore.recentMessages(conversationId)
+        val recentMessages = chatStore.recentMessages(conversationId)
             .map { message ->
                 InferenceMessage(
                     role = when (message.role) {
@@ -94,6 +90,18 @@ class ChatCoordinator(
                     content = message.content,
                 )
             }
+
+        val contextualMessages = attachCoreMemoryToLatestUserMessage(
+            messages = recentMessages,
+            coreMemory = coreMemoryProvider.buildMemory().trim(),
+        )
+
+        val messages = listOf(
+            InferenceMessage(
+                role = InferenceRole.SYSTEM,
+                content = systemPromptProvider.buildPrompt(),
+            )
+        ) + contextualMessages
 
         val response = StringBuilder()
         var result: ChatResult? = null
@@ -138,6 +146,39 @@ class ChatCoordinator(
         return result ?: ChatResult.Failed(
             IllegalStateException("추론이 종료 이벤트 없이 끝났습니다.")
         )
+    }
+
+    private fun attachCoreMemoryToLatestUserMessage(
+        messages: List<InferenceMessage>,
+        coreMemory: String,
+    ): List<InferenceMessage> {
+        if (coreMemory.isBlank()) {
+            return messages
+        }
+
+        val lastUserIndex = messages.indexOfLast {
+            it.role == InferenceRole.USER
+        }
+
+        if (lastUserIndex < 0) {
+            return messages
+        }
+
+        val userMessage = messages[lastUserIndex]
+        val contextualContent = buildString {
+            appendLine("[사용자 기억]")
+            appendLine("아래 내용은 이 메시지를 보낸 user 자신에 관한 배경 정보다. 현재 요청과 관련 있을 때만 참고하라.")
+            appendLine(coreMemory)
+            appendLine()
+            appendLine("[현재 사용자 메시지]")
+            append(userMessage.content)
+        }
+
+        return messages.toMutableList().also { contextualized ->
+            contextualized[lastUserIndex] = userMessage.copy(
+                content = contextualContent,
+            )
+        }
     }
 
     fun cancel() {
