@@ -1,11 +1,11 @@
 package com.monga.app.chat
 
 import com.monga.app.data.local.CoreMemory
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import kotlinx.coroutines.flow.MutableStateFlow
 
 class DefaultCoreMemoryProviderTest {
 
@@ -28,14 +28,14 @@ class DefaultCoreMemoryProviderTest {
                     ),
                 )
             ),
-            tokenCounter = { text -> text.length },
-            tokenBudget = 5,
+            tokenCounter = { text -> text.lineSequence().count() },
+            tokenBudget = 1,
         )
 
         val result = provider.buildMemory()
 
         assertEquals(
-            "- new",
+            "- 사용자에 대한 사실: new",
             result,
         )
     }
@@ -59,9 +59,11 @@ class DefaultCoreMemoryProviderTest {
             tokenBudget = 100,
         )
 
-        assertEquals("- original", provider.buildMemory())
+        assertEquals(
+            "- 사용자에 대한 사실: original",
+            provider.buildMemory(),
+        )
 
-        // 같은 Provider 인스턴스에서 기억이 수정된 상황을 재현한다.
         memories.value = listOf(
             CoreMemory(
                 id = 1,
@@ -71,12 +73,13 @@ class DefaultCoreMemoryProviderTest {
             )
         )
 
-        assertEquals("- revised", provider.buildMemory())
+        assertEquals(
+            "- 사용자에 대한 사실: revised",
+            provider.buildMemory(),
+        )
 
-        // 삭제된 기억도 다음 호출에 반영되어야 한다.
         memories.value = emptyList()
 
         assertEquals("", provider.buildMemory())
     }
-
 }
