@@ -21,7 +21,7 @@ import org.junit.Test
 class CoreMemoryUserContextTest {
 
     @Test
-    fun injectsCoreMemoryOnlyIntoLatestUserInferenceCopy() = runBlocking {
+    fun injectsCoreMemoryAsSeparateSyntheticContextPair() = runBlocking {
         val store = RecordingChatStore().apply {
             seed(
                 role = MessageRole.USER,
@@ -52,22 +52,30 @@ class CoreMemoryUserContextTest {
         assertEquals(ChatResult.Completed, result)
 
         val generated = engine.receivedMessages
-        val systemMessage = generated.first {
-            it.role == InferenceRole.SYSTEM
-        }
-        assertFalse(systemMessage.content.contains("나는 녹차를 좋아한다."))
+        assertEquals(InferenceRole.SYSTEM, generated[0].role)
+        assertFalse(generated[0].content.contains("나는 녹차를 좋아한다."))
 
-        val userMessages = generated.filter {
-            it.role == InferenceRole.USER
-        }
-        assertEquals("예전 질문", userMessages.first().content)
+        assertEquals(InferenceRole.USER, generated[1].role)
+        assertTrue(generated[1].content.contains("[사용자 기억 컨텍스트]"))
+        assertTrue(generated[1].content.contains("- 나는 녹차를 좋아한다."))
+        assertTrue(generated[1].content.contains("1인칭 표현(나, 나는, 내가)은 user를 뜻한다."))
 
-        val latestUserMessage = userMessages.last().content
-        assertTrue(latestUserMessage.contains("[사용자 기억]"))
-        assertTrue(latestUserMessage.contains("- 나는 녹차를 좋아한다."))
-        assertTrue(latestUserMessage.contains("[현재 사용자 메시지]"))
-        assertTrue(
-            latestUserMessage.endsWith("내가 좋아하는 음료가 뭐였지?")
+        assertEquals(InferenceRole.ASSISTANT, generated[2].role)
+        assertEquals(
+            "확인했다. 위 정보의 주체는 user다. 관련 있는 요청에만 참고한다.",
+            generated[2].content,
+        )
+
+        val actualUserMessages = generated
+            .drop(3)
+            .filter { it.role == InferenceRole.USER }
+        assertEquals("예전 질문", actualUserMessages.first().content)
+        assertEquals(
+            "내가 좋아하는 음료가 뭐였지?",
+            actualUserMessages.last().content,
+        )
+        assertFalse(
+            actualUserMessages.last().content.contains("[사용자 기억 컨텍스트]")
         )
 
         val persistedCurrentUser = store.savedMessages
@@ -76,7 +84,9 @@ class CoreMemoryUserContextTest {
             "내가 좋아하는 음료가 뭐였지?",
             persistedCurrentUser.content,
         )
-        assertFalse(persistedCurrentUser.content.contains("[사용자 기억]"))
+        assertFalse(
+            persistedCurrentUser.content.contains("[사용자 기억 컨텍스트]")
+        )
     }
 
     private class RecordingChatStore : ChatStore {
