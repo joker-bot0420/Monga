@@ -11,10 +11,17 @@ class DefaultCoreMemoryProvider(
         CoreMemoryBudgetPolicy.DEFAULT_TOKEN_BUDGET,
 ) : CoreMemoryProvider {
 
-    override suspend fun buildMemory(): String =
-        CoreMemoryBudgetPolicy.build(
-            memories = coreMemories.first(),
+    override suspend fun buildMemory(): String {
+        val formattedMemories = coreMemories.first().map { memory ->
+            memory.copy(
+                content = UserMemoryFormatter.format(memory.content),
+            )
+        }
+
+        return CoreMemoryBudgetPolicy.build(
+            memories = formattedMemories,
             tokenBudget = tokenBudget,
             tokenCounter = tokenCounter,
         )
+    }
 }
