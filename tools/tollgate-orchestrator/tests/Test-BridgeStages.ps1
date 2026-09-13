@@ -6,12 +6,13 @@ $repo = Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Pare
 $bridge = Join-Path $repo 'tools/tollgate-bridge'
 $executorSource = Get-Content -LiteralPath (Join-Path $bridge 'run-tollgate-task.ps1') -Raw
 $requiredProtected = @(
-    'watch-tollgate.ps1','prepare-tollgate-task.ps1','run-tollgate-task.ps1',
-    'tollgate-result.schema.json','tollgate-loop-result.schema.json','report-tollgate-result.ps1',
-    'Tollgate.HistoricalRecovery.ps1','settle-tollgate-history.ps1','historical-recovery.schema.json'
+    'tools/tollgate-bridge/watch-tollgate.ps1','tools/tollgate-bridge/prepare-tollgate-task.ps1','tools/tollgate-bridge/run-tollgate-task.ps1',
+    'tools/tollgate-bridge/tollgate-result.schema.json','tools/tollgate-bridge/tollgate-loop-result.schema.json','tools/tollgate-bridge/report-tollgate-result.ps1',
+    'tools/tollgate-bridge/Tollgate.HistoricalRecovery.ps1','tools/tollgate-bridge/settle-tollgate-history.ps1','tools/tollgate-bridge/historical-recovery.schema.json',
+    'tools/tollgate-orchestrator/Orchestrator.Lock.ps1'
 )
 foreach ($name in $requiredProtected) {
-    if ($executorSource -notmatch "(?m)^\s*'$([regex]::Escape($name))',?\s*$") { throw "Executor protected-file list omits: $name" }
+    if ($executorSource -notmatch "(?m)'$([regex]::Escape($name))'") { throw "Executor protected-file list omits: $name" }
 }
 $before = @(Get-ChildItem -LiteralPath $bridge -File | Get-FileHash -Algorithm SHA256)
 $suite = Join-Path $PSScriptRoot ('state/adapters-' + [guid]::NewGuid().ToString('N'))
@@ -68,4 +69,4 @@ Assert-Fails { Invoke-TollgateBridgeProcess $missing }
 $after = @(Get-ChildItem -LiteralPath $bridge -File | Get-FileHash -Algorithm SHA256)
 if (Compare-Object $before $after -Property Path,Hash) { throw 'Protected bridge bytes changed.' }
 Write-Output "PASS: stage argument transport, routing constraints, discovery failure, child exit/start failure, protected bridge hashes; fixture $suite"
-Write-Output 'PASS: executor protected-file list explicitly includes reporter and all historical recovery control files.'
+Write-Output 'PASS: executor protected-file list explicitly includes reporter, historical recovery controls, and shared lock module by canonical path.'

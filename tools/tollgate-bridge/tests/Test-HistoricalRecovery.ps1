@@ -70,7 +70,14 @@ try {
         -not (Test-Path (Join-Path $normal "audit\$id-recovery.json")) -or
         -not (Test-Path (Join-Path $normal "failed\$id.json"))) { throw "Normal settlement failed: $(@($r.Output) -join ' | ')" }
     $terminal = Get-Content (Join-Path $normal "failed\$id.json") -Raw -Encoding utf8 | ConvertFrom-Json
-    Assert-HistoricalRecoveryTerminalRecord $terminal
+    $normalManifest = Get-Content (Join-Path $normal 'evidence-manifest.json') -Raw -Encoding utf8 | ConvertFrom-Json
+    Assert-HistoricalRecoveryTerminalRecordAgainstManifest $terminal $normalManifest
+    Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $terminal (Join-Path $normal "failed\$id.json") $normal $normalManifest
+    $production = Get-ProductionHistoricalEvidenceManifest
+    if ([string]$production.pending_sha256 -cne 'c1a38025d51c0df53e41fb69dfbea7c259812053d7e03af06f496f267b827fd5' -or
+        [string]$production.approval.body_sha256 -cne '9cf38618469c281ab7b9238f054f3b8ace33d829537f5473e983acdd75ec9ad7' -or
+        [string]$production.checkpoint.body_sha256 -cne 'be8f67d852e1d7c314fe41e6b6120176873feac51dfbdd09da9cdbc01e413d18') { throw 'Production immutable manifest constants changed.' }
+    $bypass=$false;try{Assert-HistoricalRecoveryTerminalRecord $terminal}catch{$bypass=$true};if(-not$bypass){throw 'Synthetic terminal bypassed production immutable evidence.'}
     $r = Invoke-Recovery $normal
     if ($r.ExitCode -ne 0) { throw 'Idempotent settlement failed.' }
     $terminalHash = (Get-FileHash (Join-Path $normal "failed\$id.json") -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -92,6 +99,16 @@ try {
     Assert-Fails { Invoke-Recovery $completed } 'completed collision'
     $reportedOnly = New-Fixture 'reported-only'; Write-Json (Join-Path $reportedOnly "reported\$id.json") @{approval_comment_id=$id}
     Assert-Fails { Invoke-Recovery $reportedOnly } 'reported without terminal'
+    foreach($artifact in @('audit', 'archive', 'failed')) {
+        if (Test-Path (Join-Path $reportedOnly $artifact)) { throw "Reported-only refusal created $artifact state." }
+    }
+
+    $missingAudit=New-Fixture 'missing-audit';$mr=Invoke-Recovery $missingAudit;if($mr.ExitCode-ne 0){throw 'Unable to seed missing-audit fixture.'};Remove-Item (Join-Path $missingAudit "audit\$id-recovery.json") -Force
+    $mt=Get-Content (Join-Path $missingAudit "failed\$id.json") -Raw -Encoding utf8|ConvertFrom-Json;$mm=Get-Content (Join-Path $missingAudit 'evidence-manifest.json') -Raw -Encoding utf8|ConvertFrom-Json
+    $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $mt (Join-Path $missingAudit "failed\$id.json") $missingAudit $mm}catch{$blocked=$true};if(-not$blocked){throw 'Historical terminal without audit was accepted.'}
+    $checkpointMismatch=New-Fixture 'checkpoint-mismatch';$cr=Invoke-Recovery $checkpointMismatch;if($cr.ExitCode-ne 0){throw 'Unable to seed checkpoint fixture.'};$ap=Join-Path $checkpointMismatch "audit\$id-recovery.json";$av=Get-Content $ap -Raw -Encoding utf8|ConvertFrom-Json;$av.checkpoint_evidence.body_sha256=('e'*64);Write-Json $ap $av
+    $ct=Get-Content (Join-Path $checkpointMismatch "failed\$id.json") -Raw -Encoding utf8|ConvertFrom-Json;$cm=Get-Content (Join-Path $checkpointMismatch 'evidence-manifest.json') -Raw -Encoding utf8|ConvertFrom-Json
+    $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $ct (Join-Path $checkpointMismatch "failed\$id.json") $checkpointMismatch $cm}catch{$blocked=$true};if(-not$blocked){throw 'Checkpoint evidence mismatch was accepted.'}
 
     foreach($point in 'AfterAudit','AfterArchive','AfterTerminal','BeforePendingRemoval') {
         $partial = New-Fixture "partial-$point"
@@ -159,6 +176,41 @@ try {
     } finally { $lock.Dispose() }
     if ((Test-Path (Join-Path $executorLocked "completed\$id.json")) -or (Test-Path (Join-Path $executorLocked "failed\$id.json"))) { throw 'Lock-blocked executor wrote terminal state.' }
 
+    function Invoke-DirectExecutor([string]$Root,[string]$Hook='') {
+        $arguments=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$executor,'-RunPending','-SyntheticStateRoot',$Root,'-TaskFile',(Join-Path $Root "pending\$id.json"))
+        if(-not[string]::IsNullOrWhiteSpace($Hook)){$arguments+=@('-SyntheticBeforeTaskLockHook',$Hook)}
+        $saved=$ErrorActionPreference;$ErrorActionPreference='Continue'
+        try{$output=& powershell.exe @arguments 2>&1;return [pscustomobject]@{ExitCode=$LASTEXITCODE;Output=@($output)}}finally{$ErrorActionPreference=$saved}
+    }
+    foreach($mutation in @('body','replace','comment')) {
+        $case=New-Fixture "executor-toctou-$mutation"
+        $marker=Join-Path $case 'codex-called'
+        $fake=Join-Path $case 'codex.cmd';[IO.File]::WriteAllText($fake,"@echo called>`"$marker`"`r`n@exit /b 9`r`n",[Text.Encoding]::ASCII)
+        $hook=Join-Path $case 'mutate.ps1'
+        $hookText = switch($mutation){
+            'body' { 'param($TaskFile); $v=Get-Content -LiteralPath $TaskFile -Raw|ConvertFrom-Json;$v.body="changed";$v|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $TaskFile -Encoding utf8' }
+            'replace' { 'param($TaskFile); $bytes=[IO.File]::ReadAllBytes($TaskFile);Start-Sleep -Milliseconds 20;[IO.File]::Delete($TaskFile);[IO.File]::WriteAllBytes($TaskFile,$bytes)' }
+            'comment' { 'param($TaskFile); $v=Get-Content -LiteralPath $TaskFile -Raw|ConvertFrom-Json;$v.comment_id=5563219044;$v|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $TaskFile -Encoding utf8' }
+        }
+        [IO.File]::WriteAllText($hook,$hookText,$utf8)
+        $oldPath=$env:PATH;try{$env:PATH="$case;$oldPath";$result=Invoke-DirectExecutor $case $hook}finally{$env:PATH=$oldPath}
+        if($result.ExitCode-eq 0){throw "Executor accepted pending $mutation mutation."}
+        if(Test-Path $marker){throw "Codex child ran after pending $mutation mutation."}
+    }
+    $identical=New-Fixture 'executor-identical-bytes';Write-Json (Join-Path $identical "failed\$id.json") @{comment_id=$id}
+    $noChangeHook=Join-Path $identical 'noop.ps1';[IO.File]::WriteAllText($noChangeHook,'param($TaskFile); [void][IO.File]::ReadAllBytes($TaskFile)',$utf8)
+    $identicalResult=Invoke-DirectExecutor $identical $noChangeHook
+    if($identicalResult.ExitCode-ne 0-or(@($identicalResult.Output)-join"`n")-notmatch'TOLLGATE_TERMINAL_RECORD_ALREADY_EXISTS'){throw 'Identical pending bytes did not pass post-lock validation.'}
+
+    $outside=Join-Path $suite 'junction-outside';[void][IO.Directory]::CreateDirectory($outside)
+    $junctionFixture=Join-Path $suite 'junction-fixture';[void][IO.Directory]::CreateDirectory($junctionFixture)
+    $junction=Join-Path $junctionFixture 'orchestrator';$mklink=& cmd.exe /c "mklink /J `"$junction`" `"$outside`"" 2>&1
+    if($LASTEXITCODE-eq 0){
+        $junctionTask=New-Fixture 'junction-fixture'
+        $jr=Invoke-DirectExecutor $junctionTask
+        if($jr.ExitCode-eq 0){throw 'Executor accepted a reparse-point lock parent.'}
+    }else{Write-Output "SKIP: junction escape fixture unavailable: $(@($mklink)-join' ')"}
+
     $releasePath=Join-Path $suite 'process-failure/orchestrator.lock';[void][IO.Directory]::CreateDirectory((Split-Path $releasePath -Parent))
     $escaped=$releasePath.Replace("'","''");$code=". '$($lockModule.Replace("'","''"))'; `$h=Enter-TollgateOrchestratorLock '$escaped'; exit 7"
     $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code));& powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded
@@ -188,6 +240,7 @@ try {
 
     Write-Output 'PASS: historical settlement validation, immutable manifest, full-terminal conflict refusal and idempotency.'
     Write-Output 'PASS: orchestrator/task lock contention blocks recovery and direct RunPending; process exit releases locks.'
+    Write-Output 'PASS: direct RunPending exact-byte TOCTOU checks and lock-path reparse checks fail closed before Codex.'
     Write-Output 'PASS: normal open-PR behavior, merged-PR isolation, comment adoption and collision fail-closed behavior.'
     Write-Output 'PASS: no Codex child process, GitHub API, live queue or production state was used.'
 } finally {

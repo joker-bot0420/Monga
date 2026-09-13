@@ -7,7 +7,9 @@ param(
     [switch]$RunPending,
     [switch]$LifecycleSelfTest,
     [switch]$Utf8TransportSelfTest,
+    [switch]$ProtectionSelfTest,
     [string]$SyntheticStateRoot,
+    [string]$SyntheticBeforeTaskLockHook,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 300
 )
@@ -78,6 +80,79 @@ function Test-DirectJsonChild {
     $actualParent = Get-NormalizedPath -Path ([System.IO.Path]::GetDirectoryName($Path))
     $expectedParent = Get-NormalizedPath -Path $Parent
     return $actualParent.Equals($expectedParent, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-NoReparsePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $rootFull = (Get-NormalizedPath $Root)
+    $cursor = [IO.Path]::GetFullPath($Path)
+    if (-not ($cursor.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase) -or
+        $cursor.StartsWith($rootFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase))) {
+        throw 'Executor path escapes its trusted root.'
+    }
+    while ($cursor.Length -ge $rootFull.Length) {
+        if (Test-Path -LiteralPath $cursor) {
+            if ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Executor path contains a reparse point: $cursor"
+            }
+        }
+        if ($cursor.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) { break }
+        $cursor = Split-Path -Parent $cursor
+    }
+}
+
+function Read-EnvelopeSnapshot {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $utf8 = New-Object Text.UTF8Encoding($false, $true)
+    $text = $utf8.GetString($bytes)
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return [pscustomobject]@{
+        Bytes=$bytes; Sha256=$hash; Envelope=($text | ConvertFrom-Json)
+        CreationTimeUtcTicks=$item.CreationTimeUtc.Ticks; LastWriteTimeUtcTicks=$item.LastWriteTimeUtc.Ticks
+    }
+}
+
+function Get-ProtectedControlRelativePaths {
+    return @(
+        'tools/tollgate-bridge/watch-tollgate.ps1','tools/tollgate-bridge/prepare-tollgate-task.ps1',
+        'tools/tollgate-bridge/run-tollgate-task.ps1','tools/tollgate-bridge/tollgate-result.schema.json',
+        'tools/tollgate-bridge/tollgate-loop-result.schema.json','tools/tollgate-bridge/report-tollgate-result.ps1',
+        'tools/tollgate-bridge/Tollgate.HistoricalRecovery.ps1','tools/tollgate-bridge/settle-tollgate-history.ps1',
+        'tools/tollgate-bridge/historical-recovery.schema.json','tools/tollgate-orchestrator/Orchestrator.Lock.ps1'
+    )
+}
+
+function Get-ProtectedControlHashes {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+    return @(Get-ProtectedControlRelativePaths | ForEach-Object {
+        $path=Get-NormalizedPath (Join-Path $RepositoryRoot $_)
+        if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Protected control file is missing: $path"}
+        "$($_.Replace('\','/'))|$((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash)"
+    } | Sort-Object)
+}
+
+function Assert-ProtectedControlHashesUnchanged {
+    param([string[]]$Before,[string[]]$After)
+    if(@(Compare-Object -ReferenceObject $Before -DifferenceObject $After).Count-ne 0){throw 'Protected bridge/orchestrator control files changed during execution.'}
+}
+
+function Invoke-ProtectionSelfTest {
+    $required=@('tools/tollgate-orchestrator/Orchestrator.Lock.ps1','tools/tollgate-bridge/report-tollgate-result.ps1','tools/tollgate-bridge/Tollgate.HistoricalRecovery.ps1','tools/tollgate-bridge/settle-tollgate-history.ps1','tools/tollgate-bridge/historical-recovery.schema.json','tools/tollgate-bridge/watch-tollgate.ps1')
+    $actual=@(Get-ProtectedControlRelativePaths);foreach($path in $required){if($path-cnotin$actual){throw "Required protected canonical path is absent: $path"}}
+    $root=Join-Path ([IO.Path]::GetTempPath()) "monga-protection-$([Guid]::NewGuid().ToString('N'))"
+    try{
+        foreach($path in $actual){$target=Join-Path $root $path;[void][IO.Directory]::CreateDirectory((Split-Path $target -Parent));[IO.File]::WriteAllText($target,$path)}
+        foreach($path in $required){$before=Get-ProtectedControlHashes $root;$target=Join-Path $root $path;[IO.File]::AppendAllText($target,'changed');$blocked=$false;try{Assert-ProtectedControlHashesUnchanged $before (Get-ProtectedControlHashes $root)}catch{$blocked=$true};if(-not$blocked){throw "Protected mutation was not detected: $path"};[IO.File]::WriteAllText($target,$path)}
+        Write-Output 'PROTECTED_CONTROL_FILES_TEST_OK'
+    }finally{if(Test-Path $root){Remove-Item -LiteralPath $root -Recurse -Force}}
 }
 
 function Assert-Envelope {
@@ -952,10 +1027,10 @@ function Get-LocalStateInventory {
 }
 
 try {
-    $primaryModeCount = @(@($SyntheticSmoke, $SyntheticLoopSmoke, $RunPending, $LifecycleSelfTest, $Utf8TransportSelfTest) |
+    $primaryModeCount = @(@($SyntheticSmoke, $SyntheticLoopSmoke, $RunPending, $LifecycleSelfTest, $Utf8TransportSelfTest, $ProtectionSelfTest) |
         Where-Object { $_.IsPresent }).Count
     if ($primaryModeCount -ne 1) {
-        throw 'Select exactly one explicit mode: -SyntheticSmoke, -SyntheticLoopSmoke, -RunPending, -LifecycleSelfTest, or -Utf8TransportSelfTest.'
+        throw 'Select exactly one explicit mode: -SyntheticSmoke, -SyntheticLoopSmoke, -RunPending, -LifecycleSelfTest, -Utf8TransportSelfTest, or -ProtectionSelfTest.'
     }
     if ($WorkspaceWriteSmoke -and -not $SyntheticSmoke) {
         throw '-WorkspaceWriteSmoke is permitted only together with -SyntheticSmoke.'
@@ -979,7 +1054,12 @@ try {
         if (-not ($candidateState + [IO.Path]::DirectorySeparatorChar).StartsWith($allowedTestRoot, [StringComparison]::OrdinalIgnoreCase)) {
             throw '-SyntheticStateRoot must be beneath tools/tollgate-bridge/tests/state/.'
         }
+        Assert-NoReparsePath -Root $allowedTestRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) -Path $candidateState
         $stateRoot = $candidateState
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SyntheticBeforeTaskLockHook) -and
+        [string]::IsNullOrWhiteSpace($SyntheticStateRoot)) {
+        throw '-SyntheticBeforeTaskLockHook is test-only and requires -SyntheticStateRoot.'
     }
     $pendingDirectory = Join-Path $stateRoot 'pending'
     $completedDirectory = Join-Path $stateRoot 'completed'
@@ -991,6 +1071,9 @@ try {
     $loopSmokeDirectory = Join-Path $stateRoot 'loop-smoke'
     $loopSmokeFile = Join-Path $loopSmokeDirectory 'iteration-marker.txt'
 
+    Assert-NoReparsePath -Root $stateRoot -Path $stateRoot
+    Assert-NoReparsePath -Root $stateRoot -Path $pendingDirectory
+    Assert-NoReparsePath -Root $stateRoot -Path $runtimeRoot
     [void](New-Item -ItemType Directory -Path $pendingDirectory -Force)
     [void](New-Item -ItemType Directory -Path $runtimeRoot -Force)
 
@@ -1003,6 +1086,7 @@ try {
         Invoke-Utf8TransportSelfTest
         exit 0
     }
+    if ($ProtectionSelfTest) { Invoke-ProtectionSelfTest; exit 0 }
 
     if ($RunPending) {
         [void](New-Item -ItemType Directory -Path $completedDirectory -Force)
@@ -1030,15 +1114,36 @@ try {
         if (-not (Test-DirectJsonChild -Path $resolvedTaskFile -Parent $pendingDirectory)) {
             throw "Task file must be a canonical direct .json child of '$pendingDirectory'."
         }
-        $envelope = Get-Content -LiteralPath $resolvedTaskFile -Raw -Encoding utf8 | ConvertFrom-Json
-        Assert-Envelope -Envelope $envelope -EnvelopePath $resolvedTaskFile
+        Assert-NoReparsePath -Root $stateRoot -Path $resolvedTaskFile
+        $selectedTaskPath = $resolvedTaskFile
+        $selectedSnapshot = Read-EnvelopeSnapshot -Path $selectedTaskPath
+        $envelope = $selectedSnapshot.Envelope
+        Assert-Envelope -Envelope $envelope -EnvelopePath $selectedTaskPath
         $commentId = [long]$envelope.comment_id
+        if (-not [string]::IsNullOrWhiteSpace($SyntheticBeforeTaskLockHook)) {
+            $hook = Get-NormalizedPath (Resolve-Path -LiteralPath $SyntheticBeforeTaskLockHook)
+            Assert-NoReparsePath -Root $stateRoot -Path $hook
+            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $hook -TaskFile $selectedTaskPath
+            if ($LASTEXITCODE -ne 0) { throw 'Synthetic before-lock hook failed.' }
+        }
         $taskLock = $null
         try {
-        $taskLock = Enter-TollgateOrchestratorLock -LockPath (Join-Path $stateRoot "orchestrator/task-$commentId.lock")
-        # Re-read and revalidate after lock acquisition. This closes the selection/lock TOCTOU window.
-        $envelope = Get-Content -LiteralPath $resolvedTaskFile -Raw -Encoding utf8 | ConvertFrom-Json
-        Assert-Envelope -Envelope $envelope -EnvelopePath $resolvedTaskFile
+        $taskLockPath = Join-Path $stateRoot "orchestrator/task-$commentId.lock"
+        Assert-NoReparsePath -Root $stateRoot -Path $taskLockPath
+        $taskLock = Enter-TollgateOrchestratorLock -LockPath $taskLockPath
+        # Re-resolve and compare exact bytes after acquiring the shared task lock.
+        if (-not (Test-Path -LiteralPath $selectedTaskPath -PathType Leaf)) { throw 'Selected pending task disappeared before execution.' }
+        $lockedTaskPath = Get-NormalizedPath -Path (Resolve-Path -LiteralPath $selectedTaskPath)
+        if (-not $lockedTaskPath.Equals($selectedTaskPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Selected pending task path changed before execution.' }
+        Assert-NoReparsePath -Root $stateRoot -Path $lockedTaskPath
+        $lockedSnapshot = Read-EnvelopeSnapshot -Path $lockedTaskPath
+        if ($lockedSnapshot.Sha256 -cne $selectedSnapshot.Sha256 -or
+            $lockedSnapshot.CreationTimeUtcTicks -ne $selectedSnapshot.CreationTimeUtcTicks -or
+            $lockedSnapshot.LastWriteTimeUtcTicks -ne $selectedSnapshot.LastWriteTimeUtcTicks) {
+            throw 'Pending task exact bytes changed while waiting for its lock.'
+        }
+        $envelope = $lockedSnapshot.Envelope
+        Assert-Envelope -Envelope $envelope -EnvelopePath $lockedTaskPath
         if ([long]$envelope.comment_id -ne $commentId) { throw 'Pending task identity changed before execution.' }
         $terminalFileName = "$commentId.json"
         if ((Test-Path -LiteralPath (Join-Path $completedDirectory $terminalFileName) -PathType Leaf) -or
@@ -1058,28 +1163,17 @@ try {
         }
         [void](Get-Content -LiteralPath $loopSchemaFile -Raw -Encoding utf8 | ConvertFrom-Json)
 
-        $protectedBridgeFiles = @(
-            'watch-tollgate.ps1',
-            'prepare-tollgate-task.ps1',
-            'run-tollgate-task.ps1',
-            'tollgate-result.schema.json',
-            'tollgate-loop-result.schema.json',
-            'report-tollgate-result.ps1',
-            'Tollgate.HistoricalRecovery.ps1',
-            'settle-tollgate-history.ps1',
-            'historical-recovery.schema.json'
-        ) | ForEach-Object { Join-Path $PSScriptRoot $_ }
+        $protectedRelativePaths = @(Get-ProtectedControlRelativePaths)
+        $protectedBridgeFiles = @($protectedRelativePaths | ForEach-Object {
+            Get-NormalizedPath (Join-Path $repositoryRoot $_)
+        })
         foreach ($protectedFile in $protectedBridgeFiles) {
             if (-not (Test-Path -LiteralPath $protectedFile -PathType Leaf)) {
                 throw "Protected bridge file is missing: $protectedFile"
             }
         }
 
-        $getProtectedHashes = {
-            @($protectedBridgeFiles | ForEach-Object {
-                "$([System.IO.Path]::GetFileName($_))|$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)"
-            } | Sort-Object)
-        }
+        $getProtectedHashes = { @(Get-ProtectedControlHashes -RepositoryRoot $repositoryRoot) }
         $getPendingInventory = {
             @(Get-ChildItem -LiteralPath $pendingDirectory -Filter '*.json' -File | ForEach-Object {
                 "$($_.Name)|$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
@@ -1124,9 +1218,7 @@ try {
             }
             $protectedHashesAfter = @(& $getProtectedHashes)
             $pendingInventoryAfter = @(& $getPendingInventory)
-            if (@(Compare-Object -ReferenceObject $protectedHashesBefore -DifferenceObject $protectedHashesAfter).Count -ne 0) {
-                throw "Protected bridge files changed during real iteration $iteration."
-            }
+            Assert-ProtectedControlHashesUnchanged -Before $protectedHashesBefore -After $protectedHashesAfter
             if (@(Compare-Object -ReferenceObject $pendingInventoryBefore -DifferenceObject $pendingInventoryAfter).Count -ne 0) {
                 throw "The pending queue changed during real iteration $iteration."
             }

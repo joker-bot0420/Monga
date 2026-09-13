@@ -29,6 +29,22 @@ function Get-HistoricalRecoveryConstants {
     return $script:HistoricalRecoveryConstants
 }
 
+function Get-ProductionHistoricalEvidenceManifest {
+    $c = Get-HistoricalRecoveryConstants
+    return [pscustomobject]@{
+        pending_sha256 = $c.PendingSha256
+        iteration_sha256 = @($c.IterationSha256)
+        approval = [pscustomobject]@{
+            id = $c.ApprovalCommentId; author = $c.ApprovalCommentAuthor
+            created_at = $c.ApprovalCommentCreatedAt; body_sha256 = $c.ApprovalCommentBodySha256
+        }
+        checkpoint = [pscustomobject]@{
+            id = $c.CheckpointCommentId; author = $c.CheckpointCommentAuthor
+            created_at = $c.CheckpointCommentCreatedAt; body_sha256 = $c.CheckpointCommentBodySha256
+        }
+    }
+}
+
 function Get-RecoverySha256 {
     param([Parameter(Mandatory = $true)][byte[]]$Bytes)
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -47,9 +63,24 @@ function Get-RecoveryRequiredProperty {
     return $property.Value
 }
 
-function Assert-HistoricalRecoveryMetadata {
-    param([Parameter(Mandatory = $true)][object]$Recovery)
+function Assert-HistoricalRecoveryMetadataAgainstManifest {
+    param(
+        [Parameter(Mandatory = $true)][object]$Recovery,
+        [Parameter(Mandatory = $true)][object]$Manifest
+    )
     $c = Get-HistoricalRecoveryConstants
+    $manifestIterations = @(Get-RecoveryRequiredProperty $Manifest 'iteration_sha256')
+    if ($manifestIterations.Count -ne $c.Iterations) { throw 'Historical evidence manifest must contain five iteration hashes.' }
+    $approvalEvidence = Get-RecoveryRequiredProperty $Manifest 'approval'
+    $checkpointEvidence = Get-RecoveryRequiredProperty $Manifest 'checkpoint'
+    if ([long](Get-RecoveryRequiredProperty $approvalEvidence 'id') -ne $c.ApprovalCommentId -or
+        [string](Get-RecoveryRequiredProperty $approvalEvidence 'author') -cne $c.ApprovalCommentAuthor -or
+        [string](Get-RecoveryRequiredProperty $approvalEvidence 'created_at') -cne $c.ApprovalCommentCreatedAt -or
+        [long](Get-RecoveryRequiredProperty $checkpointEvidence 'id') -ne $c.CheckpointCommentId -or
+        [string](Get-RecoveryRequiredProperty $checkpointEvidence 'author') -cne $c.CheckpointCommentAuthor -or
+        [string](Get-RecoveryRequiredProperty $checkpointEvidence 'created_at') -cne $c.CheckpointCommentCreatedAt) {
+        throw 'Historical evidence manifest identity is invalid.'
+    }
     if ([int](Get-RecoveryRequiredProperty $Recovery 'schema_version') -ne 1 -or
         [string](Get-RecoveryRequiredProperty $Recovery 'settlement_kind') -cne 'historical_recovery' -or
         [string](Get-RecoveryRequiredProperty $Recovery 'termination_reason') -cne 'MAX_ITERATIONS_REACHED' -or
@@ -65,8 +96,9 @@ function Assert-HistoricalRecoveryMetadata {
         [bool](Get-RecoveryRequiredProperty $Recovery 'acceptance_satisfied')) {
         throw 'Historical recovery metadata does not match the approved settlement contract.'
     }
-    if ([string](Get-RecoveryRequiredProperty $Recovery 'pending_sha256') -notmatch '^[0-9a-f]{64}$') {
-        throw 'Historical recovery pending SHA-256 is invalid.'
+    $expectedPending = ([string](Get-RecoveryRequiredProperty $Manifest 'pending_sha256')).ToLowerInvariant()
+    if ([string](Get-RecoveryRequiredProperty $Recovery 'pending_sha256') -cne $expectedPending) {
+        throw 'Historical recovery pending SHA-256 does not match immutable evidence.'
     }
     $results = @(Get-RecoveryRequiredProperty $Recovery 'iteration_results')
     if ($results.Count -ne $c.Iterations) { throw 'Historical recovery must contain exactly five iteration hashes.' }
@@ -74,17 +106,33 @@ function Assert-HistoricalRecoveryMetadata {
         $item = $results[$i - 1]
         if ([int](Get-RecoveryRequiredProperty $item 'iteration') -ne $i -or
             [string](Get-RecoveryRequiredProperty $item 'status') -cne 'CONTINUE' -or
-            [string](Get-RecoveryRequiredProperty $item 'sha256') -notmatch '^[0-9a-f]{64}$') {
+            [string](Get-RecoveryRequiredProperty $item 'sha256') -cne
+                ([string]$manifestIterations[$i - 1]).ToLowerInvariant()) {
             throw "Historical recovery iteration metadata is invalid at iteration $i."
         }
+    }
+    if ([string](Get-RecoveryRequiredProperty $Recovery 'approval_body_sha256') -cne
+            ([string](Get-RecoveryRequiredProperty $approvalEvidence 'body_sha256')).ToLowerInvariant() -or
+        [string](Get-RecoveryRequiredProperty $Recovery 'checkpoint_body_sha256') -cne
+            ([string](Get-RecoveryRequiredProperty $checkpointEvidence 'body_sha256')).ToLowerInvariant()) {
+        throw 'Historical recovery comment evidence does not match immutable evidence.'
     }
     if ([string]::IsNullOrWhiteSpace([string](Get-RecoveryRequiredProperty $Recovery 'decision_required'))) {
         throw 'Historical recovery decision_required is empty.'
     }
 }
 
-function Assert-HistoricalRecoveryTerminalRecord {
-    param([Parameter(Mandatory = $true)][object]$Record)
+function Assert-HistoricalRecoveryMetadata {
+    param([Parameter(Mandatory = $true)][object]$Recovery)
+    Assert-HistoricalRecoveryMetadataAgainstManifest -Recovery $Recovery `
+        -Manifest (Get-ProductionHistoricalEvidenceManifest)
+}
+
+function Assert-HistoricalRecoveryTerminalRecordAgainstManifest {
+    param(
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][object]$Manifest
+    )
     $c = Get-HistoricalRecoveryConstants
     if ([int](Get-RecoveryRequiredProperty $Record 'schema_version') -ne 1 -or
         [long](Get-RecoveryRequiredProperty $Record 'comment_id') -ne $c.ApprovalCommentId -or
@@ -93,13 +141,17 @@ function Assert-HistoricalRecoveryTerminalRecord {
         throw 'Terminal record is not the expected historical STOP_REQUIRED settlement.'
     }
     $approval = Get-RecoveryRequiredProperty $Record 'original_approval'
+    $approvalBody = [string](Get-RecoveryRequiredProperty $approval 'body')
+    $approvalEvidence = Get-RecoveryRequiredProperty $Manifest 'approval'
     if ([string](Get-RecoveryRequiredProperty $approval 'repository') -cne $c.Repository -or
         [int](Get-RecoveryRequiredProperty $approval 'pr_number') -ne $c.PrNumber -or
         [long](Get-RecoveryRequiredProperty $approval 'comment_id') -ne $c.ApprovalCommentId -or
         [string](Get-RecoveryRequiredProperty $approval 'status') -cne 'pending' -or
         [string](Get-RecoveryRequiredProperty $approval 'author') -cne $c.ApprovalCommentAuthor -or
         [string](Get-RecoveryRequiredProperty $approval 'marker') -cne '[TOLLGATE_APPROVED]' -or
-        [string](Get-RecoveryRequiredProperty $approval 'created_at') -cne $c.ApprovalCommentCreatedAt) {
+        [string](Get-RecoveryRequiredProperty $approval 'created_at') -cne $c.ApprovalCommentCreatedAt -or
+        (Get-RecoverySha256 ([Text.UTF8Encoding]::new($false, $true).GetBytes($approvalBody))) -cne
+            ([string](Get-RecoveryRequiredProperty $approvalEvidence 'body_sha256')).ToLowerInvariant()) {
         throw 'Historical terminal approval binding is invalid.'
     }
     $finishedAt = [string](Get-RecoveryRequiredProperty $Record 'finished_at')
@@ -122,7 +174,79 @@ function Assert-HistoricalRecoveryTerminalRecord {
         if ($value -is [string]) { throw "Historical terminal final_result.$field must be an array." }
         [void]@($value)
     }
-    Assert-HistoricalRecoveryMetadata -Recovery (Get-RecoveryRequiredProperty $Record 'recovery')
+    Assert-HistoricalRecoveryMetadataAgainstManifest -Recovery (Get-RecoveryRequiredProperty $Record 'recovery') -Manifest $Manifest
+}
+
+function Assert-HistoricalRecoveryTerminalRecord {
+    param([Parameter(Mandatory = $true)][object]$Record)
+    Assert-HistoricalRecoveryTerminalRecordAgainstManifest -Record $Record `
+        -Manifest (Get-ProductionHistoricalEvidenceManifest)
+}
+
+function Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest {
+    param(
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][string]$TerminalPath,
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][object]$Manifest
+    )
+    Assert-HistoricalRecoveryTerminalRecordAgainstManifest -Record $Record -Manifest $Manifest
+    $c = Get-HistoricalRecoveryConstants
+    $terminalFull = [IO.Path]::GetFullPath($TerminalPath)
+    $expectedTerminal = [IO.Path]::GetFullPath((Join-Path $StateRoot "failed/$($c.ApprovalCommentId).json"))
+    if (-not $terminalFull.Equals($expectedTerminal, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Historical terminal must be the approval-specific failed artifact.'
+    }
+    $auditPath = Join-Path $StateRoot "audit/$($c.ApprovalCommentId)-recovery.json"
+    $archivePath = Join-Path $StateRoot "archive/pending/$($c.ApprovalCommentId).json"
+    if (-not (Test-Path -LiteralPath $auditPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
+        throw 'Historical recovery audit and archived pending evidence are required.'
+    }
+    $terminalHash = Get-RecoverySha256 ([IO.File]::ReadAllBytes($terminalFull))
+    $archiveHash = Get-RecoverySha256 ([IO.File]::ReadAllBytes($archivePath))
+    if ($archiveHash -cne ([string](Get-RecoveryRequiredProperty $Manifest 'pending_sha256')).ToLowerInvariant()) { throw 'Archived pending evidence hash is invalid.' }
+    $auditBytes = [IO.File]::ReadAllBytes($auditPath)
+    $auditText = [Text.UTF8Encoding]::new($false, $true).GetString($auditBytes).TrimStart([char]0xFEFF)
+    $audit = $auditText | ConvertFrom-Json
+    if ([string](Get-RecoveryRequiredProperty $audit 'terminal_sha256') -cne $terminalHash -or
+        [string](Get-RecoveryRequiredProperty $audit 'settled_at') -cne [string](Get-RecoveryRequiredProperty $Record 'finished_at') -or
+        [string](Get-RecoveryRequiredProperty $audit 'pending_source') -cne "pending/$($c.ApprovalCommentId).json" -or
+        [string](Get-RecoveryRequiredProperty $audit 'pending_archive') -cne "archive/pending/$($c.ApprovalCommentId).json" -or
+        [string](Get-RecoveryRequiredProperty $audit 'runtime_source') -cne "runtime/$($c.ApprovalCommentId)" -or
+        [string](Get-RecoveryRequiredProperty $audit 'terminal_target') -cne "failed/$($c.ApprovalCommentId).json") {
+        throw 'Historical recovery audit is not bound to the terminal lifecycle artifacts.'
+    }
+    $approvalAudit = Get-RecoveryRequiredProperty $audit 'approval_evidence'
+    $checkpointAudit = Get-RecoveryRequiredProperty $audit 'checkpoint_evidence'
+    $manifestApproval = Get-RecoveryRequiredProperty $Manifest 'approval'
+    $manifestCheckpoint = Get-RecoveryRequiredProperty $Manifest 'checkpoint'
+    if ([long](Get-RecoveryRequiredProperty $approvalAudit 'id') -ne [long](Get-RecoveryRequiredProperty $manifestApproval 'id') -or
+        [string](Get-RecoveryRequiredProperty $approvalAudit 'author') -cne [string](Get-RecoveryRequiredProperty $manifestApproval 'author') -or
+        [string](Get-RecoveryRequiredProperty $approvalAudit 'created_at') -cne [string](Get-RecoveryRequiredProperty $manifestApproval 'created_at') -or
+        [string](Get-RecoveryRequiredProperty $approvalAudit 'body_sha256') -cne ([string](Get-RecoveryRequiredProperty $manifestApproval 'body_sha256')).ToLowerInvariant() -or
+        [long](Get-RecoveryRequiredProperty $checkpointAudit 'id') -ne [long](Get-RecoveryRequiredProperty $manifestCheckpoint 'id') -or
+        [string](Get-RecoveryRequiredProperty $checkpointAudit 'author') -cne [string](Get-RecoveryRequiredProperty $manifestCheckpoint 'author') -or
+        [string](Get-RecoveryRequiredProperty $checkpointAudit 'created_at') -cne [string](Get-RecoveryRequiredProperty $manifestCheckpoint 'created_at') -or
+        [string](Get-RecoveryRequiredProperty $checkpointAudit 'body_sha256') -cne ([string](Get-RecoveryRequiredProperty $manifestCheckpoint 'body_sha256')).ToLowerInvariant()) {
+        throw 'Historical recovery audit comment evidence is invalid.'
+    }
+    $auditRecovery = Get-RecoveryRequiredProperty $audit 'recovery'
+    Assert-HistoricalRecoveryMetadataAgainstManifest -Recovery $auditRecovery -Manifest $Manifest
+    if (($auditRecovery | ConvertTo-Json -Depth 30 -Compress) -cne
+        ((Get-RecoveryRequiredProperty $Record 'recovery') | ConvertTo-Json -Depth 30 -Compress)) {
+        throw 'Historical recovery audit metadata does not match the terminal record.'
+    }
+}
+
+function Assert-HistoricalRecoveryEvidenceArtifacts {
+    param(
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][string]$TerminalPath,
+        [Parameter(Mandatory = $true)][string]$StateRoot
+    )
+    Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest -Record $Record -TerminalPath $TerminalPath `
+        -StateRoot $StateRoot -Manifest (Get-ProductionHistoricalEvidenceManifest)
 }
 
 function Get-HistoricalSettlementKey {
