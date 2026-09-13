@@ -21,7 +21,6 @@ class ChatCoordinator(
     private val chatStore: ChatStore,
     private val inferenceEngine: InferenceEngine,
     private val systemPromptProvider: SystemPromptProvider,
-    private val coreMemoryProvider: CoreMemoryProvider = CoreMemoryProvider { "" },
 ) {
 
     private val sendMutex = Mutex()
@@ -79,7 +78,12 @@ class ChatCoordinator(
         )
         onUserMessageSaved(text)
 
-        val recentMessages = chatStore.recentMessages(conversationId)
+        val messages = listOf(
+            InferenceMessage(
+                role = InferenceRole.SYSTEM,
+                content = systemPromptProvider.buildPrompt(),
+            )
+        ) + chatStore.recentMessages(conversationId)
             .map { message ->
                 InferenceMessage(
                     role = when (message.role) {
@@ -90,17 +94,6 @@ class ChatCoordinator(
                     content = message.content,
                 )
             }
-
-        val coreMemoryContext = buildCoreMemoryContext(
-            coreMemory = coreMemoryProvider.buildMemory().trim(),
-        )
-
-        val messages = listOf(
-            InferenceMessage(
-                role = InferenceRole.SYSTEM,
-                content = systemPromptProvider.buildPrompt(),
-            )
-        ) + coreMemoryContext + recentMessages
 
         val response = StringBuilder()
         var result: ChatResult? = null
@@ -144,33 +137,6 @@ class ChatCoordinator(
 
         return result ?: ChatResult.Failed(
             IllegalStateException("추론이 종료 이벤트 없이 끝났습니다.")
-        )
-    }
-
-    private fun buildCoreMemoryContext(
-        coreMemory: String,
-    ): List<InferenceMessage> {
-        if (coreMemory.isBlank()) {
-            return emptyList()
-        }
-
-        val userContext = buildString {
-            appendLine("[사용자 기억 컨텍스트]")
-            appendLine("다음은 이 대화를 하는 user가 자신에 대해 제공한 배경 정보다.")
-            appendLine("각 항목의 1인칭 표현(나, 나는, 내가)은 user를 뜻한다.")
-            appendLine("현재 요청과 관련 있을 때만 참고하라.")
-            append(coreMemory)
-        }
-
-        return listOf(
-            InferenceMessage(
-                role = InferenceRole.USER,
-                content = userContext,
-            ),
-            InferenceMessage(
-                role = InferenceRole.ASSISTANT,
-                content = "확인했다. 위 정보의 주체는 user다. 관련 있는 요청에만 참고한다.",
-            ),
         )
     }
 
