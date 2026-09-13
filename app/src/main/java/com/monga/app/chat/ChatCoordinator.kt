@@ -91,8 +91,7 @@ class ChatCoordinator(
                 )
             }
 
-        val contextualMessages = attachCoreMemoryToLatestUserMessage(
-            messages = recentMessages,
+        val coreMemoryContext = buildCoreMemoryContext(
             coreMemory = coreMemoryProvider.buildMemory().trim(),
         )
 
@@ -101,7 +100,7 @@ class ChatCoordinator(
                 role = InferenceRole.SYSTEM,
                 content = systemPromptProvider.buildPrompt(),
             )
-        ) + contextualMessages
+        ) + coreMemoryContext + recentMessages
 
         val response = StringBuilder()
         var result: ChatResult? = null
@@ -148,37 +147,31 @@ class ChatCoordinator(
         )
     }
 
-    private fun attachCoreMemoryToLatestUserMessage(
-        messages: List<InferenceMessage>,
+    private fun buildCoreMemoryContext(
         coreMemory: String,
     ): List<InferenceMessage> {
         if (coreMemory.isBlank()) {
-            return messages
+            return emptyList()
         }
 
-        val lastUserIndex = messages.indexOfLast {
-            it.role == InferenceRole.USER
+        val userContext = buildString {
+            appendLine("[사용자 기억 컨텍스트]")
+            appendLine("다음은 이 대화를 하는 user가 자신에 대해 제공한 배경 정보다.")
+            appendLine("각 항목의 1인칭 표현(나, 나는, 내가)은 user를 뜻한다.")
+            appendLine("현재 요청과 관련 있을 때만 참고하라.")
+            append(coreMemory)
         }
 
-        if (lastUserIndex < 0) {
-            return messages
-        }
-
-        val userMessage = messages[lastUserIndex]
-        val contextualContent = buildString {
-            appendLine("[사용자 기억]")
-            appendLine("아래 내용은 이 메시지를 보낸 user 자신에 관한 배경 정보다. 현재 요청과 관련 있을 때만 참고하라.")
-            appendLine(coreMemory)
-            appendLine()
-            appendLine("[현재 사용자 메시지]")
-            append(userMessage.content)
-        }
-
-        return messages.toMutableList().also { contextualized ->
-            contextualized[lastUserIndex] = userMessage.copy(
-                content = contextualContent,
-            )
-        }
+        return listOf(
+            InferenceMessage(
+                role = InferenceRole.USER,
+                content = userContext,
+            ),
+            InferenceMessage(
+                role = InferenceRole.ASSISTANT,
+                content = "확인했다. 위 정보의 주체는 user다. 관련 있는 요청에만 참고한다.",
+            ),
+        )
     }
 
     fun cancel() {
