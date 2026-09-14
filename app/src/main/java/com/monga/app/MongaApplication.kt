@@ -3,7 +3,6 @@ package com.monga.app
 import android.app.Application
 import com.monga.app.chat.ChatCoordinator
 import com.monga.app.chat.DefaultCoreMemoryProvider
-import com.monga.app.chat.DefaultCoreMemoryRelevanceGate
 import com.monga.app.chat.DefaultPersonaProvider
 import com.monga.app.chat.DefaultSystemPromptProvider
 import com.monga.app.data.MongaRepository
@@ -64,7 +63,6 @@ class MongaApplication : Application() {
                 personaProvider = DefaultPersonaProvider(),
             ),
             coreMemoryProvider = coreMemoryProvider,
-            coreMemoryRelevanceGate = DefaultCoreMemoryRelevanceGate,
         )
     }
 }
