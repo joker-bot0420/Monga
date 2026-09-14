@@ -96,7 +96,7 @@ class ChatCoordinator(
         val contextualMessages =
             if (coreMemoryRelevanceGate.shouldInclude(text)) {
                 attachCoreMemoryToLatestUserMessage(
-                    messages = dropAssistantImmediatelyBeforeLatestUser(
+                    messages = dropTurnImmediatelyBeforeLatestUser(
                         recentMessages
                     ),
                     coreMemory = coreMemoryProvider.buildMemory().trim(),
@@ -157,24 +157,29 @@ class ChatCoordinator(
         )
     }
 
-    private fun dropAssistantImmediatelyBeforeLatestUser(
+    private fun dropTurnImmediatelyBeforeLatestUser(
         messages: List<InferenceMessage>,
     ): List<InferenceMessage> {
         val lastUserIndex = messages.indexOfLast {
             it.role == InferenceRole.USER
         }
 
-        val previousIndex = lastUserIndex - 1
+        val assistantIndex = lastUserIndex - 1
+        val priorUserIndex = assistantIndex - 1
+
         if (
             lastUserIndex < 0 ||
-            previousIndex < 0 ||
-            messages[previousIndex].role != InferenceRole.ASSISTANT
+            assistantIndex < 0 ||
+            priorUserIndex < 0 ||
+            messages[assistantIndex].role != InferenceRole.ASSISTANT ||
+            messages[priorUserIndex].role != InferenceRole.USER
         ) {
             return messages
         }
 
         return messages.toMutableList().also { focused ->
-            focused.removeAt(previousIndex)
+            focused.removeAt(assistantIndex)
+            focused.removeAt(priorUserIndex)
         }
     }
 
