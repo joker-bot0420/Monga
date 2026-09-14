@@ -96,7 +96,9 @@ class ChatCoordinator(
         val contextualMessages =
             if (coreMemoryRelevanceGate.shouldInclude(text)) {
                 attachCoreMemoryToLatestUserMessage(
-                    messages = recentMessages,
+                    messages = dropAssistantImmediatelyBeforeLatestUser(
+                        recentMessages
+                    ),
                     coreMemory = coreMemoryProvider.buildMemory().trim(),
                 )
             } else {
@@ -153,6 +155,27 @@ class ChatCoordinator(
         return result ?: ChatResult.Failed(
             IllegalStateException("추론이 종료 이벤트 없이 끝났습니다.")
         )
+    }
+
+    private fun dropAssistantImmediatelyBeforeLatestUser(
+        messages: List<InferenceMessage>,
+    ): List<InferenceMessage> {
+        val lastUserIndex = messages.indexOfLast {
+            it.role == InferenceRole.USER
+        }
+
+        val previousIndex = lastUserIndex - 1
+        if (
+            lastUserIndex < 0 ||
+            previousIndex < 0 ||
+            messages[previousIndex].role != InferenceRole.ASSISTANT
+        ) {
+            return messages
+        }
+
+        return messages.toMutableList().also { focused ->
+            focused.removeAt(previousIndex)
+        }
     }
 
     private fun attachCoreMemoryToLatestUserMessage(
