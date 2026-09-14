@@ -15,12 +15,16 @@ $trustedAnchor = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'state')).TrimE
 . (Join-Path $bridge 'Tollgate.HistoricalRecovery.ps1')
 . (Join-Path (Split-Path $bridge -Parent) 'tollgate-orchestrator/Orchestrator.Lock.ps1')
 
+$trustedExitCodeFile = $null
 try {
     $root = [IO.Path]::GetFullPath($StateRoot).TrimEnd('\')
     Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $root -Path $root
     foreach ($path in @($EvidenceManifestPath, $ResultFile, $ExitCodeFile)) {
         Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $root -Path $path
     }
+    Initialize-HistoricalTrustedDirectory -TrustedAnchor $trustedAnchor -Root $root -Directory (Split-Path -Parent $ExitCodeFile)
+    Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $root -Path $ExitCodeFile
+    $trustedExitCodeFile = [IO.Path]::GetFullPath($ExitCodeFile)
     $manifest = Get-Content -LiteralPath $EvidenceManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
     $record = Get-Content -LiteralPath $ResultFile -Raw -Encoding utf8 | ConvertFrom-Json
     Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest -Record $record -TerminalPath $ResultFile `
@@ -37,23 +41,34 @@ try {
         $lock = Enter-HistoricalReporterTaskLock $lockPath
         try {
             $reported = Join-Path $root "reported/$([long]$record.comment_id).json"
+            Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $root -Path $reported
             if (Test-Path -LiteralPath $reported -PathType Leaf) {
                 Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $([long]$record.comment_id)"
-                [IO.File]::WriteAllText($ExitCodeFile, '0', [Text.Encoding]::ASCII)
+                Write-HistoricalBytesAtomically -Bytes ([Text.Encoding]::ASCII.GetBytes('0')) -Destination $trustedExitCodeFile `
+                    -TrustedAnchor $trustedAnchor -Root $root -RefuseOverwrite
                 exit 0
             }
-            [void][IO.Directory]::CreateDirectory((Split-Path $reported -Parent))
-            [IO.File]::AppendAllText((Join-Path $root 'mock-create-count.txt'), "1`n")
+            Initialize-HistoricalTrustedDirectory -TrustedAnchor $trustedAnchor -Root $root -Directory (Split-Path $reported -Parent)
+            $createCount = Join-Path $root 'mock-create-count.txt'
+            Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $root -Path $createCount
+            [IO.File]::AppendAllText($createCount, "1`n")
             $value = [ordered]@{approval_comment_id=[long]$record.comment_id;terminal_status='STOP_REQUIRED';settlement_key=$settlementKey;rendered_comment_sha256=(Get-RecoverySha256 ([Text.UTF8Encoding]::new($false,$true).GetBytes($body)))}
-            $temp = "$reported.$([guid]::NewGuid().ToString('N')).tmp"
-            [IO.File]::WriteAllText($temp, ($value|ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false,$true))
-            [IO.File]::Move($temp,$reported)
+            $bytes = [Text.UTF8Encoding]::new($false,$true).GetBytes(($value|ConvertTo-Json -Depth 10))
+            Write-HistoricalBytesAtomically -Bytes $bytes -Destination $reported -TrustedAnchor $trustedAnchor -Root $root -RefuseOverwrite
         } finally { $lock.Dispose() }
     }
     Write-Output '[TOLLGATE_REPORT_READY]'
-    [IO.File]::WriteAllText($ExitCodeFile, '0', [Text.Encoding]::ASCII)
+    Write-HistoricalBytesAtomically -Bytes ([Text.Encoding]::ASCII.GetBytes('0')) -Destination $trustedExitCodeFile `
+        -TrustedAnchor $trustedAnchor -Root $root -RefuseOverwrite
 } catch {
     [Console]::Error.WriteLine("HISTORICAL_REPORTER_FIXTURE_ERROR: $($_.Exception.Message)")
-    [IO.File]::WriteAllText($ExitCodeFile, '1', [Text.Encoding]::ASCII)
+    if ($null -ne $trustedExitCodeFile) {
+        try {
+            Write-HistoricalBytesAtomically -Bytes ([Text.Encoding]::ASCII.GetBytes('1')) -Destination $trustedExitCodeFile `
+                -TrustedAnchor $trustedAnchor -Root $root -RefuseOverwrite
+        } catch {
+            [Console]::Error.WriteLine("HISTORICAL_REPORTER_FIXTURE_EXIT_EVIDENCE_ERROR: $($_.Exception.Message)")
+        }
+    }
     exit 1
 }

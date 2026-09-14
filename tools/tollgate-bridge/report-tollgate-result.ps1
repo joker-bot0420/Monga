@@ -551,6 +551,9 @@ try {
         $historicalTaskLock = Enter-HistoricalReporterTaskLock -LockPath $taskLockPath
     }
     $reportedFile = Join-Path $reportedDirectory "$commentId.json"
+    if ($HistoricalRecovery) {
+        Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $reportedFile
+    }
     $alreadyReported = Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $terminalHash
     if ($alreadyReported -and -not $HistoricalRecovery) {
         Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $commentId"
@@ -638,7 +641,16 @@ try {
             $reported.settlement_key = $settlementKey
             $reported.rendered_comment_sha256 = $renderedHash
         }
-        Write-JsonAtomically -Value $reported -Destination $reportedFile
+        if ($HistoricalRecovery) {
+            Initialize-HistoricalTrustedDirectory -TrustedAnchor $repositoryRoot -Root $stateRoot -Directory $reportedDirectory
+            Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $reportedFile
+            $reportedBytes = $utf8NoBom.GetBytes(($reported | ConvertTo-Json -Depth 20))
+            Write-HistoricalBytesAtomically -Bytes $reportedBytes -Destination $reportedFile `
+                -TrustedAnchor $repositoryRoot -Root $stateRoot -RefuseOverwrite
+            [void](Get-Content -LiteralPath $reportedFile -Raw -Encoding utf8 | ConvertFrom-Json)
+        } else {
+            Write-JsonAtomically -Value $reported -Destination $reportedFile
+        }
     }
 
     Write-Output '[TOLLGATE_REPORT_READY]'

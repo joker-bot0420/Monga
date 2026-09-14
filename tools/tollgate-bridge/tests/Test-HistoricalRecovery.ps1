@@ -309,6 +309,39 @@ try {
         }else{Write-Output "SKIP: $relativeParent reparse fixture unavailable: $(@($linkResult)-join' ')"}
     }
 
+    # Exercise the production settlement entry point with each lifecycle parent
+    # replaced by a junction. No artifact may reach the external target.
+    foreach ($relativeParent in @('audit','archive/pending','failed')) {
+        $caseRoot = New-Fixture ('settlement-junction-' + $relativeParent.Replace('/','-'))
+        $external = Join-Path $suite ('settlement-external-' + $relativeParent.Replace('/','-'))
+        [void][IO.Directory]::CreateDirectory($external)
+        $parent = Join-Path $caseRoot $relativeParent
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $parent))
+        $linkResult = & cmd.exe /c "mklink /J `"$parent`" `"$external`"" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $settlementResult = Invoke-Recovery $caseRoot
+            if ($settlementResult.ExitCode -eq 0) { throw "Settlement accepted $relativeParent junction." }
+            if (@(Get-ChildItem -LiteralPath $external -Force -ErrorAction SilentlyContinue).Count -ne 0) {
+                throw "Rejected settlement $relativeParent junction wrote outside its fixture."
+            }
+        } else { Write-Output "SKIP: settlement $relativeParent junction unavailable: $(@($linkResult)-join' ')" }
+    }
+
+    foreach ($relativeParent in @('completed','failed')) {
+        $caseRoot = New-Fixture ('executor-junction-' + $relativeParent)
+        $external = Join-Path $suite ('executor-external-' + $relativeParent)
+        [void][IO.Directory]::CreateDirectory($external)
+        $parent = Join-Path $caseRoot $relativeParent
+        $linkResult = & cmd.exe /c "mklink /J `"$parent`" `"$external`"" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $executorResult = Invoke-DirectExecutor $caseRoot
+            if ($executorResult.ExitCode -eq 0) { throw "Executor accepted $relativeParent junction." }
+            if (@(Get-ChildItem -LiteralPath $external -Force -ErrorAction SilentlyContinue).Count -ne 0) {
+                throw "Rejected executor $relativeParent junction wrote outside its fixture."
+            }
+        } else { Write-Output "SKIP: executor $relativeParent junction unavailable: $(@($linkResult)-join' ')" }
+    }
+
     $releasePath=Join-Path $suite 'process-failure/orchestrator.lock';[void][IO.Directory]::CreateDirectory((Split-Path $releasePath -Parent))
     $escaped=$releasePath.Replace("'","''");$code=". '$($lockModule.Replace("'","''"))'; `$h=Enter-TollgateOrchestratorLock '$escaped'; exit 7"
     $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code));& powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded
@@ -337,6 +370,33 @@ try {
     if (-not $blocked) { throw 'Conflicting historical reported hash was accepted.' }
 
     $publishRoot=New-Fixture 'reporter-main-publish';$seed=Invoke-Recovery $publishRoot;if($seed.ExitCode-ne 0){throw 'Unable to seed reporter publish fixture.'}
+    $externalExit = Join-Path $suite 'external-exit-evidence.txt'
+    $savedPreference=$ErrorActionPreference;$ErrorActionPreference='Continue'
+    try{$externalExitOutput = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $reporterFixture `
+        -DryRun -StateRoot $publishRoot -EvidenceManifestPath (Join-Path $publishRoot 'evidence-manifest.json') `
+        -ResultFile (Join-Path $publishRoot "failed\$id.json") -ExitCodeFile $externalExit 2>&1;$externalExitCode=$LASTEXITCODE}
+    finally{$ErrorActionPreference=$savedPreference}
+    if ($externalExitCode -eq 0 -or (Test-Path -LiteralPath $externalExit)) {
+        throw "Reporter fixture wrote untrusted external exit evidence: $(@($externalExitOutput)-join' ')"
+    }
+
+    $reportedExternal = Join-Path $suite 'reporter-junction-external'
+    [void][IO.Directory]::CreateDirectory($reportedExternal)
+    $reportedParent = Join-Path $publishRoot 'reported'
+    $reportedLinkResult = & cmd.exe /c "mklink /J `"$reportedParent`" `"$reportedExternal`"" 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $reportedJunctionExit = Join-Path $publishRoot 'reported-junction.exit'
+        $savedPreference=$ErrorActionPreference;$ErrorActionPreference='Continue'
+        try{$reportedJunctionOutput = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $reporterFixture `
+            -MockPublish -StateRoot $publishRoot -EvidenceManifestPath (Join-Path $publishRoot 'evidence-manifest.json') `
+            -ResultFile (Join-Path $publishRoot "failed\$id.json") -ExitCodeFile $reportedJunctionExit 2>&1;$reportedJunctionExitCode=$LASTEXITCODE}
+        finally{$ErrorActionPreference=$savedPreference}
+        if ($reportedJunctionExitCode -eq 0 -or (Test-Path -LiteralPath (Join-Path $reportedExternal "$id.json"))) {
+            throw "Reporter fixture accepted reported junction: $(@($reportedJunctionOutput)-join' ')"
+        }
+        Remove-Item -LiteralPath $reportedParent -Force
+    } else { Write-Output "SKIP: reporter reported junction unavailable: $(@($reportedLinkResult)-join' ')" }
+
     $reporterArguments=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$reporterFixture,'-MockPublish','-StateRoot',$publishRoot,'-EvidenceManifestPath',(Join-Path $publishRoot 'evidence-manifest.json'),'-ResultFile',(Join-Path $publishRoot "failed\$id.json"))
     function Start-FixtureReporter { $token=[guid]::NewGuid().ToString('N');$stdout=Join-Path $publishRoot "$token.stdout";$stderr=Join-Path $publishRoot "$token.stderr";$exitFile=Join-Path $publishRoot "$token.exit";$p=Start-Process powershell.exe -ArgumentList ($reporterArguments+@('-ExitCodeFile',$exitFile)) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr;[pscustomobject]@{Process=$p;Stdout=$stdout;Stderr=$stderr;ExitFile=$exitFile} }
     $r1=Start-FixtureReporter;$r2=Start-FixtureReporter

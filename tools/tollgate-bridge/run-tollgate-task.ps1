@@ -104,6 +104,53 @@ function Assert-NoReparsePath {
     }
 }
 
+function Initialize-ExecutorTrustedDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$TrustedAnchor,
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$Directory
+    )
+    Assert-NoReparsePath -Root $TrustedAnchor -Path $StateRoot
+    Assert-NoReparsePath -Root $StateRoot -Path $Directory
+    Assert-NoReparsePath -Root $TrustedAnchor -Path $Directory
+    [void][IO.Directory]::CreateDirectory($Directory)
+    Assert-NoReparsePath -Root $TrustedAnchor -Path $StateRoot
+    Assert-NoReparsePath -Root $StateRoot -Path $Directory
+    Assert-NoReparsePath -Root $TrustedAnchor -Path $Directory
+}
+
+function Write-ExecutorJsonAtomically {
+    param(
+        [Parameter(Mandatory = $true)][object]$Value,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$TrustedAnchor,
+        [Parameter(Mandatory = $true)][string]$StateRoot
+    )
+    $directory = Split-Path -Parent $Destination
+    Assert-NoReparsePath -Root $StateRoot -Path $Destination
+    Assert-NoReparsePath -Root $TrustedAnchor -Path $Destination
+    Initialize-ExecutorTrustedDirectory -TrustedAnchor $TrustedAnchor -StateRoot $StateRoot -Directory $directory
+    $temporary = Join-Path $directory ".$([IO.Path]::GetFileName($Destination)).$([Guid]::NewGuid().ToString('N')).tmp"
+    foreach ($path in @($Destination, $temporary)) {
+        Assert-NoReparsePath -Root $StateRoot -Path $path
+        Assert-NoReparsePath -Root $TrustedAnchor -Path $path
+    }
+    try {
+        $Value | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $temporary -Encoding utf8
+        [void](Get-Content -LiteralPath $temporary -Raw -Encoding utf8 | ConvertFrom-Json)
+        foreach ($path in @($Destination, $temporary)) {
+            Assert-NoReparsePath -Root $StateRoot -Path $path
+            Assert-NoReparsePath -Root $TrustedAnchor -Path $path
+        }
+        Move-Item -LiteralPath $temporary -Destination $Destination
+        Assert-NoReparsePath -Root $TrustedAnchor -Path $Destination
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) {
+            Remove-Item -LiteralPath $temporary -Force
+        }
+    }
+}
+
 function Read-EnvelopeSnapshot {
     param([Parameter(Mandatory = $true)][string]$Path)
     $item = Get-Item -LiteralPath $Path -Force
@@ -551,13 +598,25 @@ function Complete-TaskTransition {
         [int]$Iterations,
 
         [Parameter(Mandatory = $true)]
-        [object]$FinalResult
+        [object]$FinalResult,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TrustedAnchor,
+
+        [Parameter(Mandatory = $true)]
+        [string]$StateRoot
     )
 
     $commentId = [long]$Envelope.comment_id
     $fileName = "$commentId.json"
     $completedFile = Join-Path $CompletedDirectory $fileName
     $failedFile = Join-Path $FailedDirectory $fileName
+    foreach ($path in @($completedFile, $failedFile, $PendingFile)) {
+        Assert-NoReparsePath -Root $StateRoot -Path $path
+        Assert-NoReparsePath -Root $TrustedAnchor -Path $path
+    }
+    Initialize-ExecutorTrustedDirectory -TrustedAnchor $TrustedAnchor -StateRoot $StateRoot -Directory $CompletedDirectory
+    Initialize-ExecutorTrustedDirectory -TrustedAnchor $TrustedAnchor -StateRoot $StateRoot -Directory $FailedDirectory
     if ((Test-Path -LiteralPath $completedFile -PathType Leaf) -or
         (Test-Path -LiteralPath $failedFile -PathType Leaf)) {
         throw "Terminal record already exists for comment $commentId."
@@ -575,7 +634,7 @@ function Complete-TaskTransition {
         final_result = $FinalResult
     }
 
-    Write-JsonAtomically -Value $record -Destination $terminalFile
+    Write-ExecutorJsonAtomically -Value $record -Destination $terminalFile -TrustedAnchor $TrustedAnchor -StateRoot $StateRoot
     $verified = Get-Content -LiteralPath $terminalFile -Raw -Encoding utf8 | ConvertFrom-Json
     if ([long]$verified.comment_id -ne $commentId -or
         [string]$verified.terminal_status -ne $TerminalStatus -or
@@ -584,6 +643,10 @@ function Complete-TaskTransition {
         throw 'Terminal record verification failed; pending task was preserved.'
     }
 
+    foreach ($path in @($terminalFile, $PendingFile)) {
+        Assert-NoReparsePath -Root $StateRoot -Path $path
+        Assert-NoReparsePath -Root $TrustedAnchor -Path $path
+    }
     Remove-Item -LiteralPath $PendingFile -Force
     return $terminalFile
 }
@@ -618,7 +681,8 @@ function Invoke-LifecycleSelfTest {
         $completedResult = [pscustomobject]@{ status = 'TOLLGATE_REACHED'; summary = '완료'; requires_user = $false; evidence = @('ok'); changed_files = @(); tests = @('ok'); next_action = '' }
         $completedFile = Complete-TaskTransition -PendingFile $completedPending `
             -CompletedDirectory $completedDirectory -FailedDirectory $failedDirectory `
-            -Envelope $completedEnvelope -TerminalStatus 'TOLLGATE_REACHED' -Iterations 2 -FinalResult $completedResult
+            -Envelope $completedEnvelope -TerminalStatus 'TOLLGATE_REACHED' -Iterations 2 -FinalResult $completedResult `
+            -TrustedAnchor $testRoot -StateRoot $testRoot
         $completedRoundTrip = Get-Content -LiteralPath $completedFile -Raw -Encoding utf8 | ConvertFrom-Json
         if ((Test-Path -LiteralPath $completedPending) -or
             [string]$completedRoundTrip.original_approval.body -cne [string]$completedEnvelope.body -or
@@ -633,7 +697,8 @@ function Invoke-LifecycleSelfTest {
         $failedResult = [pscustomobject]@{ status = 'STOP_REQUIRED'; summary = '사용자 판단 필요'; requires_user = $true; evidence = @('stop'); changed_files = @(); tests = @(); next_action = 'wait' }
         $failedFile = Complete-TaskTransition -PendingFile $failedPending `
             -CompletedDirectory $completedDirectory -FailedDirectory $failedDirectory `
-            -Envelope $failedEnvelope -TerminalStatus 'STOP_REQUIRED' -Iterations 1 -FinalResult $failedResult
+            -Envelope $failedEnvelope -TerminalStatus 'STOP_REQUIRED' -Iterations 1 -FinalResult $failedResult `
+            -TrustedAnchor $testRoot -StateRoot $testRoot
         $failedRoundTrip = Get-Content -LiteralPath $failedFile -Raw -Encoding utf8 | ConvertFrom-Json
         if ((Test-Path -LiteralPath $failedPending) -or
             [string]$failedRoundTrip.original_approval.body -cne [string]$failedEnvelope.body -or
@@ -651,7 +716,8 @@ function Invoke-LifecycleSelfTest {
         try {
             [void](Complete-TaskTransition -PendingFile $recoveryPending `
                 -CompletedDirectory (Join-Path $blocker 'completed') -FailedDirectory $failedDirectory `
-                -Envelope $recoveryEnvelope -TerminalStatus 'TOLLGATE_REACHED' -Iterations 1 -FinalResult $completedResult)
+                -Envelope $recoveryEnvelope -TerminalStatus 'TOLLGATE_REACHED' -Iterations 1 -FinalResult $completedResult `
+                -TrustedAnchor $testRoot -StateRoot $testRoot)
         } catch {
             $writeFailed = $true
         }
@@ -668,7 +734,8 @@ function Invoke-LifecycleSelfTest {
         try {
             [void](Complete-TaskTransition -PendingFile $duplicatePending `
                 -CompletedDirectory $completedDirectory -FailedDirectory $failedDirectory `
-                -Envelope $duplicateEnvelope -TerminalStatus 'STOP_REQUIRED' -Iterations 1 -FinalResult $failedResult)
+                -Envelope $duplicateEnvelope -TerminalStatus 'STOP_REQUIRED' -Iterations 1 -FinalResult $failedResult `
+                -TrustedAnchor $testRoot -StateRoot $testRoot)
         } catch {
             $duplicateBlocked = $true
         }
@@ -1100,8 +1167,8 @@ try {
     if ($ProtectionSelfTest) { Invoke-ProtectionSelfTest; exit 0 }
 
     if ($RunPending) {
-        [void](New-Item -ItemType Directory -Path $completedDirectory -Force)
-        [void](New-Item -ItemType Directory -Path $failedDirectory -Force)
+        Initialize-ExecutorTrustedDirectory -TrustedAnchor $trustedStateAnchor -StateRoot $stateRoot -Directory $completedDirectory
+        Initialize-ExecutorTrustedDirectory -TrustedAnchor $trustedStateAnchor -StateRoot $stateRoot -Directory $failedDirectory
 
         if ([string]::IsNullOrWhiteSpace($TaskFile)) {
             $pendingTasks = @(Get-ChildItem -LiteralPath $pendingDirectory -Filter '*.json' -File)
@@ -1251,7 +1318,8 @@ try {
             $terminalStatus = [string]$result.status
             $terminalFile = Complete-TaskTransition -PendingFile $resolvedTaskFile `
                 -CompletedDirectory $completedDirectory -FailedDirectory $failedDirectory `
-                -Envelope $envelope -TerminalStatus $terminalStatus -Iterations $iteration -FinalResult $result
+                -Envelope $envelope -TerminalStatus $terminalStatus -Iterations $iteration -FinalResult $result `
+                -TrustedAnchor $trustedStateAnchor -StateRoot $stateRoot
             Write-Output '[TOLLGATE_REAL_EXECUTION_TERMINAL]'
             Write-Output "comment_id: $commentId"
             Write-Output "terminal_status: $terminalStatus"

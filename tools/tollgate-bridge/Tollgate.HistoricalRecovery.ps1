@@ -152,6 +152,47 @@ function Assert-HistoricalNoReparsePath {
     }
 }
 
+function Initialize-HistoricalTrustedDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$TrustedAnchor,
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Directory
+    )
+    Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $Root -Path $Directory
+    [void][IO.Directory]::CreateDirectory($Directory)
+    Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $Root -Path $Directory
+}
+
+function Write-HistoricalBytesAtomically {
+    param(
+        [Parameter(Mandatory = $true)][byte[]]$Bytes,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$TrustedAnchor,
+        [Parameter(Mandatory = $true)][string]$Root,
+        [switch]$RefuseOverwrite
+    )
+    $directory = Split-Path -Parent $Destination
+    Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $Root -Path $Destination
+    Initialize-HistoricalTrustedDirectory -TrustedAnchor $TrustedAnchor -Root $Root -Directory $directory
+    Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $Root -Path $Destination
+    $temporary = Join-Path $directory ".$([IO.Path]::GetFileName($Destination)).$([Guid]::NewGuid().ToString('N')).tmp"
+    Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $Root -Path $temporary
+    try {
+        [IO.File]::WriteAllBytes($temporary, $Bytes)
+        Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $Root -Path $temporary
+        Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $Root -Path $Destination
+        if ($RefuseOverwrite -and (Test-Path -LiteralPath $Destination)) {
+            throw "Refusing to overwrite recovery artifact: $Destination"
+        }
+        [IO.File]::Move($temporary, $Destination)
+        Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $Root -Path $Destination
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Enter-HistoricalReporterTaskLock {
     param([Parameter(Mandatory = $true)][string]$LockPath, [int]$TimeoutMilliseconds = 30000)
     $deadline = [DateTimeOffset]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
