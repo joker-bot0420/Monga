@@ -8,7 +8,7 @@ import org.junit.Test
 class DefaultSystemPromptProviderTest {
 
     @Test
-    fun buildsStaticPromptWithPersonaAndMemoryRules() = runBlocking {
+    fun buildsStaticPromptWithoutMemoryMarker() = runBlocking {
         val provider = DefaultSystemPromptProvider(
             personaProvider = PersonaProvider {
                 "- 친근하게 대화한다."
@@ -21,7 +21,7 @@ class DefaultSystemPromptProviderTest {
         assertTrue(prompt.contains("[페르소나]"))
         assertTrue(prompt.contains("- 친근하게 대화한다."))
         assertTrue(prompt.contains("규칙:"))
-        assertTrue(prompt.contains("[사용자 기억]"))
+        assertFalse(prompt.contains("[사용자 기억]"))
         assertFalse(prompt.contains("녹차"))
 
         assertTrue(
