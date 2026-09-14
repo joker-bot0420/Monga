@@ -22,8 +22,8 @@ class ChatCoordinator(
     private val inferenceEngine: InferenceEngine,
     private val systemPromptProvider: SystemPromptProvider,
     private val coreMemoryProvider: CoreMemoryProvider = CoreMemoryProvider { _ -> "" },
+    private val episodicMemoryProvider: EpisodicMemoryProvider = EpisodicMemoryProvider { _ -> "" },
 ) {
-
     private val sendMutex = Mutex()
 
     suspend fun send(
@@ -34,14 +34,8 @@ class ChatCoordinator(
     ): ChatResult {
         if (content.isBlank()) return ChatResult.Ignored
         if (!sendMutex.tryLock()) return ChatResult.Ignored
-
         return try {
-            sendInternal(
-                conversationId = conversationId,
-                content = content,
-                onToken = onToken,
-                onUserMessageSaved = onUserMessageSaved,
-            )
+            sendInternal(conversationId, content, onToken, onUserMessageSaved)
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
@@ -54,82 +48,61 @@ class ChatCoordinator(
     private suspend fun sendInternal(
         conversationId: Long,
         content: String,
-        onToken: (String) -> Unit = {},
-        onUserMessageSaved: (String) -> Unit = {},
+        onToken: (String) -> Unit,
+        onUserMessageSaved: (String) -> Unit,
     ): ChatResult {
         val text = content.trim()
-        if (text.isEmpty()) {
-            return ChatResult.Ignored
-        }
-
+        if (text.isEmpty()) return ChatResult.Ignored
         val currentState = inferenceEngine.state.value
-
         if (currentState != InferenceState.Ready) {
             return ChatResult.Failed(
-                IllegalStateException(
-                    "모델이 준비되지 않았습니다. 현재 상태: $currentState"
-                )
+                IllegalStateException("모델이 준비되지 않았습니다. 현재 상태: $currentState")
             )
         }
 
-        chatStore.saveMessage(
-            conversationId = conversationId,
-            role = MessageRole.USER,
-            content = text,
-        )
+        chatStore.saveMessage(conversationId, MessageRole.USER, text)
         onUserMessageSaved(text)
 
-        val recentMessages = chatStore.recentMessages(conversationId)
-            .map { message ->
-                InferenceMessage(
-                    role = when (message.role) {
-                        MessageRole.SYSTEM -> InferenceRole.SYSTEM
-                        MessageRole.USER -> InferenceRole.USER
-                        MessageRole.ASSISTANT -> InferenceRole.ASSISTANT
-                    },
-                    content = message.content,
-                )
-            }
+        val recentMessages = chatStore.recentMessages(conversationId).map { message ->
+            InferenceMessage(
+                role = when (message.role) {
+                    MessageRole.SYSTEM -> InferenceRole.SYSTEM
+                    MessageRole.USER -> InferenceRole.USER
+                    MessageRole.ASSISTANT -> InferenceRole.ASSISTANT
+                },
+                content = message.content,
+            )
+        }
 
         val coreMemory = coreMemoryProvider.buildMemory(text).trim()
+        val episodicMemory = episodicMemoryProvider.buildMemory(text).trim()
         val messages = ContextComposer.compose(
             systemPrompt = systemPromptProvider.buildPrompt(),
             recentMessages = recentMessages,
             coreMemory = coreMemory,
+            episodicMemory = episodicMemory,
         )
 
         val response = StringBuilder()
         var result: ChatResult? = null
-
         try {
             inferenceEngine.generate(messages).collect { event ->
-                if (result != null) {
-                    return@collect
-                }
-
+                if (result != null) return@collect
                 when (event) {
                     is InferenceEvent.Token -> {
                         response.append(event.text)
                         onToken(response.toString())
                     }
-
                     InferenceEvent.Completed -> {
                         chatStore.saveMessage(
-                            conversationId = conversationId,
-                            role = MessageRole.ASSISTANT,
-                            content = response.toString(),
+                            conversationId,
+                            MessageRole.ASSISTANT,
+                            response.toString(),
                         )
-
                         result = ChatResult.Completed
                     }
-
-                    InferenceEvent.Cancelled -> {
-                        result = ChatResult.Cancelled
-                    }
-
-                    is InferenceEvent.Failed -> {
-                        result = ChatResult.Failed(event.cause)
-                    }
+                    InferenceEvent.Cancelled -> result = ChatResult.Cancelled
+                    is InferenceEvent.Failed -> result = ChatResult.Failed(event.cause)
                 }
             }
         } catch (e: CancellationException) {
