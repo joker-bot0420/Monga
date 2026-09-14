@@ -91,6 +91,23 @@ class CoreMemorySelectorTest {
     }
 
     @Test
+    fun doesNotTreatFirstPersonParticleAsAgeTopic() {
+        val result = DefaultCoreMemorySelector.select(
+            userMessage = "나는 어디에 살지?",
+            memories = listOf(
+                CoreMemory(
+                    id = 40,
+                    content = "나는 추위에 약하다.",
+                    createdAt = 200L,
+                    updatedAt = 200L,
+                ),
+            ),
+        )
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
     fun doesNotTreatCarPreferenceAsTeaPreference() {
         val customMemories = listOf(
             CoreMemory(
