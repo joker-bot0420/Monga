@@ -21,7 +21,7 @@ class ChatCoordinator(
     private val chatStore: ChatStore,
     private val inferenceEngine: InferenceEngine,
     private val systemPromptProvider: SystemPromptProvider,
-    private val coreMemoryProvider: CoreMemoryProvider = CoreMemoryProvider { "" },
+    private val coreMemoryProvider: CoreMemoryProvider = CoreMemoryProvider { _ -> "" },
     private val coreMemoryRelevanceGate: CoreMemoryRelevanceGate =
         CoreMemoryRelevanceGate { false },
 ) {
@@ -95,12 +95,18 @@ class ChatCoordinator(
 
         val contextualMessages =
             if (coreMemoryRelevanceGate.shouldInclude(text)) {
-                attachCoreMemoryToLatestUserMessage(
-                    messages = dropTurnImmediatelyBeforeLatestUser(
-                        recentMessages
-                    ),
-                    coreMemory = coreMemoryProvider.buildMemory().trim(),
-                )
+                val coreMemory = coreMemoryProvider.buildMemory(text).trim()
+
+                if (coreMemory.isNotEmpty()) {
+                    attachCoreMemoryToLatestUserMessage(
+                        messages = dropTurnImmediatelyBeforeLatestUser(
+                            recentMessages
+                        ),
+                        coreMemory = coreMemory,
+                    )
+                } else {
+                    recentMessages
+                }
             } else {
                 recentMessages
             }
