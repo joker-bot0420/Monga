@@ -21,6 +21,9 @@ class ChatCoordinator(
     private val chatStore: ChatStore,
     private val inferenceEngine: InferenceEngine,
     private val systemPromptProvider: SystemPromptProvider,
+    private val coreMemoryProvider: CoreMemoryProvider = CoreMemoryProvider { "" },
+    private val coreMemoryRelevanceGate: CoreMemoryRelevanceGate =
+        CoreMemoryRelevanceGate { false },
 ) {
 
     private val sendMutex = Mutex()
@@ -78,10 +81,25 @@ class ChatCoordinator(
         )
         onUserMessageSaved(text)
 
+        val systemPrompt = buildString {
+            append(systemPromptProvider.buildPrompt().trimEnd())
+
+            if (coreMemoryRelevanceGate.shouldInclude(text)) {
+                val coreMemory = coreMemoryProvider.buildMemory().trim()
+
+                if (coreMemory.isNotEmpty()) {
+                    appendLine()
+                    appendLine()
+                    appendLine("[사용자 기억]")
+                    append(coreMemory)
+                }
+            }
+        }
+
         val messages = listOf(
             InferenceMessage(
                 role = InferenceRole.SYSTEM,
-                content = systemPromptProvider.buildPrompt(),
+                content = systemPrompt,
             )
         ) + chatStore.recentMessages(conversationId)
             .map { message ->
