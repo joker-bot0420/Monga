@@ -4,10 +4,7 @@ param(
     [switch]$DryRun,
     [switch]$Publish,
     [switch]$HistoricalRecovery,
-    [switch]$SelfTest,
-    [string]$SyntheticHistoricalStateRoot,
-    [string]$SyntheticHistoricalManifestPath,
-    [string]$SyntheticGhExecutable
+    [switch]$SelfTest
 )
 
 Set-StrictMode -Version Latest
@@ -33,13 +30,6 @@ function Invoke-GhJsonUtf8 {
         [string]$Endpoint
     )
 
-    if ($ghExecutable -cne 'gh') {
-        $json = (& $ghExecutable api --method GET $Endpoint | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) {
-            throw "Synthetic GitHub adapter failed for '$Endpoint'."
-        }
-        return ConvertFrom-Json -InputObject $json
-    }
     $stdoutPath = [System.IO.Path]::GetTempFileName()
     $stderrPath = [System.IO.Path]::GetTempFileName()
     $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
@@ -499,35 +489,7 @@ try {
     $repositoryRootOutput = & git -C $PSScriptRoot rev-parse --show-toplevel 2>&1
     if ($LASTEXITCODE -ne 0) { throw 'Unable to locate repository root.' }
     $repositoryRoot = Get-NormalizedPath -Path (($repositoryRootOutput | Out-String).Trim())
-    $syntheticHistorical = -not [string]::IsNullOrWhiteSpace($SyntheticHistoricalStateRoot)
-    if ($syntheticHistorical) {
-        if (-not $HistoricalRecovery -or [string]::IsNullOrWhiteSpace($SyntheticHistoricalManifestPath)) {
-            throw 'Synthetic historical reporter state requires -HistoricalRecovery and an evidence manifest.'
-        }
-        $allowedSyntheticRoot = Get-NormalizedPath (Join-Path $PSScriptRoot 'tests/state')
-        $stateRoot = Get-NormalizedPath $SyntheticHistoricalStateRoot
-        if (-not ($stateRoot + '\').StartsWith($allowedSyntheticRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Synthetic historical reporter state must be beneath tools/tollgate-bridge/tests/state/.'
-        }
-        $manifestPath = Get-NormalizedPath (Resolve-Path -LiteralPath $SyntheticHistoricalManifestPath)
-        if (-not ($manifestPath + '\').StartsWith($stateRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Synthetic historical evidence manifest must be inside its fixture root.'
-        }
-        $historicalManifest = (Get-Content -LiteralPath $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json)
-        if ($Publish) {
-            if ([string]::IsNullOrWhiteSpace($SyntheticGhExecutable)) { throw 'Synthetic historical publish requires an isolated GitHub adapter.' }
-            $ghExecutable = Get-NormalizedPath (Resolve-Path -LiteralPath $SyntheticGhExecutable)
-            if (-not ($ghExecutable + '\').StartsWith($stateRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
-                throw 'Synthetic GitHub adapter must be inside its fixture root.'
-            }
-        }
-    } else {
-        if (-not [string]::IsNullOrWhiteSpace($SyntheticHistoricalManifestPath) -or -not [string]::IsNullOrWhiteSpace($SyntheticGhExecutable)) {
-            throw 'Synthetic reporter options require a synthetic historical state root.'
-        }
-        $stateRoot = Join-Path $repositoryRoot '.tollgate-local'
-        $historicalManifest = $null
-    }
+    $stateRoot = Join-Path $repositoryRoot '.tollgate-local'
     $completedDirectory = Join-Path $stateRoot 'completed'
     $failedDirectory = Join-Path $stateRoot 'failed'
     $reportedDirectory = Join-Path $stateRoot 'reported'
@@ -573,18 +535,16 @@ try {
     $hasRecovery = $null -ne $record.PSObject.Properties['recovery']
     if ($HistoricalRecovery) {
         if (-not $hasRecovery) { throw 'Historical recovery mode requires a recovery terminal record.' }
-        if ($syntheticHistorical) {
-            Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest -Record $record -TerminalPath $resolvedResultFile -StateRoot $stateRoot -Manifest $historicalManifest
-        } else {
-            Assert-HistoricalRecoveryEvidenceArtifacts -Record $record -TerminalPath $resolvedResultFile -StateRoot $stateRoot
-        }
+        Assert-HistoricalRecoveryEvidenceArtifacts -Record $record -TerminalPath $resolvedResultFile -StateRoot $stateRoot
     } elseif ($hasRecovery) {
         throw 'Historical recovery records require explicit -HistoricalRecovery mode.'
     }
     $commentId = [long]$record.comment_id
     if ($HistoricalRecovery) {
         $taskLockPath = Join-Path $stateRoot "orchestrator/task-$commentId.lock"
-        Assert-HistoricalNoReparsePath -Root $stateRoot -Path $taskLockPath
+        Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $taskLockPath
+        [void][IO.Directory]::CreateDirectory((Split-Path $taskLockPath -Parent))
+        Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $taskLockPath
         # Serialize discovery, optional publication, verification, and the
         # reported-state commit with settlement and direct executor users of
         # the same approval-specific lock identity.
@@ -611,9 +571,15 @@ try {
         exit 0
     }
     $runtimeDirectory = Join-Path (Join-Path $stateRoot 'runtime/reporter') "$commentId"
+    if ($HistoricalRecovery) { Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $runtimeDirectory }
     [void](New-Item -ItemType Directory -Path $runtimeDirectory -Force)
     $reportFile = Join-Path $runtimeDirectory 'github-comment.txt'
     $metadataFile = Join-Path $runtimeDirectory 'report-metadata.json'
+    if ($HistoricalRecovery) {
+        foreach ($path in @($runtimeDirectory,$reportFile,$metadataFile)) {
+            Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $path
+        }
+    }
     [System.IO.File]::WriteAllBytes($reportFile, $renderedBytes)
     $metadata = [ordered]@{
         source_terminal_record = $resolvedResultFile
@@ -626,7 +592,7 @@ try {
     Write-JsonAtomically -Value $metadata -Destination $metadataFile
 
     if ($Publish) {
-        if (-not $syntheticHistorical -and $null -eq (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue)) { throw 'gh is unavailable.' }
+        if ($null -eq (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue)) { throw 'gh is unavailable.' }
         & $ghExecutable auth status *> $null
         if ($LASTEXITCODE -ne 0) { throw 'gh authentication failed.' }
         $user = Invoke-GhJsonUtf8 -Endpoint 'user'

@@ -25,28 +25,35 @@ if (-not $Synthetic) {
     $ReporterStage = { param($root, $file) Invoke-TollgateBridgeProcess (New-TollgateBridgeStage -Stage Reporter -InputFile $file) }
 }
 $root = [IO.Path]::GetFullPath($StateRoot)
-$fixturePrefix = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'tests/state')) + [IO.Path]::DirectorySeparatorChar
+$repositoryRoot = [IO.Path]::GetFullPath((Split-Path (Split-Path $PSScriptRoot -Parent) -Parent))
+$trustedAnchor = if ($Synthetic) { [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'tests/state')) } else { $repositoryRoot }
+$fixturePrefix = $trustedAnchor.TrimEnd('\') + [IO.Path]::DirectorySeparatorChar
 if ($Synthetic -and -not $root.StartsWith($fixturePrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Synthetic state must be beneath tools/tollgate-orchestrator/tests/state/.'
 }
-function Assert-NoOrchestratorReparsePath([string]$Root, [string]$Path) {
+function Assert-NoOrchestratorReparsePath([string]$Anchor, [string]$Root, [string]$Path) {
+    $anchorFull = [IO.Path]::GetFullPath($Anchor).TrimEnd('\')
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
     $pathFull = [IO.Path]::GetFullPath($Path)
+    if (-not ($rootFull -eq $anchorFull -or $rootFull.StartsWith($anchorFull + '\', [StringComparison]::OrdinalIgnoreCase))) {
+        throw 'Orchestrator state root escapes its trusted anchor.'
+    }
     if (-not ($pathFull -eq $rootFull -or $pathFull.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase))) {
         throw 'Orchestrator path escapes the state root.'
     }
     $current = $pathFull
-    while ($current -and $current.Length -ge $rootFull.Length) {
+    while ($current -and $current.Length -ge $anchorFull.Length) {
         if (Test-Path -LiteralPath $current) {
             if ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
                 throw "Reparse points are not permitted in orchestrator state paths: $current"
             }
         }
-        if ($current.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) { break }
+        if ($current.Equals($anchorFull, [StringComparison]::OrdinalIgnoreCase)) { break }
         $current = [IO.Path]::GetDirectoryName($current)
     }
+    if (-not $current -or -not $current.Equals($anchorFull, [StringComparison]::OrdinalIgnoreCase)) { throw 'Orchestrator path could not be traced to its trusted anchor.' }
 }
-Assert-NoOrchestratorReparsePath $root $root
+Assert-NoOrchestratorReparsePath $trustedAnchor $root $root
 function Get-StageFiles([string]$Directory) {
     $path = Join-Path $root $Directory
     if (Test-Path -LiteralPath $path) {
@@ -65,7 +72,9 @@ function Invoke-Stage([scriptblock]$Stage, [string]$InputFile) {
 }
 
 $orchestratorLockPath = Join-Path $root 'orchestrator/orchestrator.lock'
-Assert-NoOrchestratorReparsePath $root $orchestratorLockPath
+Assert-NoOrchestratorReparsePath $trustedAnchor $root $orchestratorLockPath
+[void][IO.Directory]::CreateDirectory((Split-Path $orchestratorLockPath -Parent))
+Assert-NoOrchestratorReparsePath $trustedAnchor $root $orchestratorLockPath
 $handle = Enter-TollgateOrchestratorLock -LockPath $orchestratorLockPath
 try {
     # The real prepare stage already invokes watcher before staging approval.

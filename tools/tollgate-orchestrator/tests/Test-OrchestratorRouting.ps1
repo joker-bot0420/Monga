@@ -59,4 +59,24 @@ if ($LASTEXITCODE -eq 0) {
 } else {
     Write-Output "SKIP: junction lock-parent fixture unavailable: $(@($mklink) -join ' ')"
 }
+
+# A junction above StateRoot must also be rejected, including when the lexical
+# tests/state prefix remains valid.
+foreach ($depth in @(1,2)) {
+    $container = Join-Path $suite "ancestor-$depth"
+    [void][IO.Directory]::CreateDirectory($container)
+    $external = Join-Path $suite "ancestor-external-$depth"
+    [void][IO.Directory]::CreateDirectory((Join-Path $external 'state-root'))
+    $linkParent = if ($depth -eq 1) { $container } else { Join-Path $container 'level-one' }
+    [void][IO.Directory]::CreateDirectory($linkParent)
+    $link = Join-Path $linkParent 'link'
+    $mklink = & cmd.exe /c "mklink /J `"$link`" `"$external`"" 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $escapedRoot = Join-Path $link 'state-root'
+        Assert-Fails { & $entry -Synthetic -StateRoot $escapedRoot -PrepareStage $ok -ExecutorStage $never -ReporterStage $never }
+        if (Test-Path -LiteralPath (Join-Path $external 'state-root/orchestrator/orchestrator.lock')) {
+            throw "Rejected ancestor junction at depth $depth created an external lock."
+        }
+    } else { Write-Output "SKIP: ancestor junction depth $depth unavailable: $(@($mklink) -join ' ')" }
+}
 Write-Output "PASS: no-work, pending, completed/failed routing, prepare/executor/reporter errors, lock release. Fixtures: $suite"

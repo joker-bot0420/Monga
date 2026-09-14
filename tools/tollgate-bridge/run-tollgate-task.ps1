@@ -1054,6 +1054,7 @@ try {
 
     $repositoryRoot = Get-NormalizedPath -Path (($repositoryRootOutput | Out-String).Trim())
     $stateRoot = Join-Path $repositoryRoot '.tollgate-local'
+    $trustedStateAnchor = $repositoryRoot
     if (-not [string]::IsNullOrWhiteSpace($SyntheticStateRoot)) {
         if (-not $RunPending) { throw '-SyntheticStateRoot is test-only and requires -RunPending.' }
         $candidateState = Get-NormalizedPath $SyntheticStateRoot
@@ -1061,7 +1062,8 @@ try {
         if (-not ($candidateState + [IO.Path]::DirectorySeparatorChar).StartsWith($allowedTestRoot, [StringComparison]::OrdinalIgnoreCase)) {
             throw '-SyntheticStateRoot must be beneath tools/tollgate-bridge/tests/state/.'
         }
-        Assert-NoReparsePath -Root $allowedTestRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) -Path $candidateState
+        $trustedStateAnchor = $allowedTestRoot.TrimEnd([IO.Path]::DirectorySeparatorChar)
+        Assert-NoReparsePath -Root $trustedStateAnchor -Path $candidateState
         $stateRoot = $candidateState
     }
     if (-not [string]::IsNullOrWhiteSpace($SyntheticBeforeTaskLockHook) -and
@@ -1078,11 +1080,13 @@ try {
     $loopSmokeDirectory = Join-Path $stateRoot 'loop-smoke'
     $loopSmokeFile = Join-Path $loopSmokeDirectory 'iteration-marker.txt'
 
-    Assert-NoReparsePath -Root $stateRoot -Path $stateRoot
-    Assert-NoReparsePath -Root $stateRoot -Path $pendingDirectory
-    Assert-NoReparsePath -Root $stateRoot -Path $runtimeRoot
+    Assert-NoReparsePath -Root $trustedStateAnchor -Path $stateRoot
+    Assert-NoReparsePath -Root $trustedStateAnchor -Path $pendingDirectory
+    Assert-NoReparsePath -Root $trustedStateAnchor -Path $runtimeRoot
     [void](New-Item -ItemType Directory -Path $pendingDirectory -Force)
     [void](New-Item -ItemType Directory -Path $runtimeRoot -Force)
+    Assert-NoReparsePath -Root $trustedStateAnchor -Path $pendingDirectory
+    Assert-NoReparsePath -Root $trustedStateAnchor -Path $runtimeRoot
 
     if ($LifecycleSelfTest) {
         Invoke-LifecycleSelfTest
@@ -1121,7 +1125,7 @@ try {
         if (-not (Test-DirectJsonChild -Path $resolvedTaskFile -Parent $pendingDirectory)) {
             throw "Task file must be a canonical direct .json child of '$pendingDirectory'."
         }
-        Assert-NoReparsePath -Root $stateRoot -Path $resolvedTaskFile
+        Assert-NoReparsePath -Root $trustedStateAnchor -Path $resolvedTaskFile
         $selectedTaskPath = $resolvedTaskFile
         $selectedSnapshot = Read-EnvelopeSnapshot -Path $selectedTaskPath
         $envelope = $selectedSnapshot.Envelope
@@ -1129,20 +1133,22 @@ try {
         $commentId = [long]$envelope.comment_id
         if (-not [string]::IsNullOrWhiteSpace($SyntheticBeforeTaskLockHook)) {
             $hook = Get-NormalizedPath (Resolve-Path -LiteralPath $SyntheticBeforeTaskLockHook)
-            Assert-NoReparsePath -Root $stateRoot -Path $hook
+            Assert-NoReparsePath -Root $trustedStateAnchor -Path $hook
             & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $hook -TaskFile $selectedTaskPath
             if ($LASTEXITCODE -ne 0) { throw 'Synthetic before-lock hook failed.' }
         }
         $taskLock = $null
         try {
         $taskLockPath = Join-Path $stateRoot "orchestrator/task-$commentId.lock"
-        Assert-NoReparsePath -Root $stateRoot -Path $taskLockPath
+        Assert-NoReparsePath -Root $trustedStateAnchor -Path $taskLockPath
+        [void][IO.Directory]::CreateDirectory((Split-Path $taskLockPath -Parent))
+        Assert-NoReparsePath -Root $trustedStateAnchor -Path $taskLockPath
         $taskLock = Enter-TollgateOrchestratorLock -LockPath $taskLockPath
         # Re-resolve and compare exact bytes after acquiring the shared task lock.
         if (-not (Test-Path -LiteralPath $selectedTaskPath -PathType Leaf)) { throw 'Selected pending task disappeared before execution.' }
         $lockedTaskPath = Get-NormalizedPath -Path (Resolve-Path -LiteralPath $selectedTaskPath)
         if (-not $lockedTaskPath.Equals($selectedTaskPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Selected pending task path changed before execution.' }
-        Assert-NoReparsePath -Root $stateRoot -Path $lockedTaskPath
+        Assert-NoReparsePath -Root $trustedStateAnchor -Path $lockedTaskPath
         $lockedSnapshot = Read-EnvelopeSnapshot -Path $lockedTaskPath
         if ($lockedSnapshot.Sha256 -cne $selectedSnapshot.Sha256 -or
             $lockedSnapshot.CreationTimeUtcTicks -ne $selectedSnapshot.CreationTimeUtcTicks -or

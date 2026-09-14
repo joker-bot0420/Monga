@@ -123,21 +123,32 @@ function Assert-HistoricalRecoveryMetadataAgainstManifest {
 }
 
 function Assert-HistoricalNoReparsePath {
-    param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$Path)
+    param(
+        [Parameter(Mandatory = $true)][string]$TrustedAnchor,
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $anchorFull = [IO.Path]::GetFullPath($TrustedAnchor).TrimEnd('\')
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
     $pathFull = [IO.Path]::GetFullPath($Path)
+    if (-not ($rootFull -eq $anchorFull -or $rootFull.StartsWith($anchorFull + '\', [StringComparison]::OrdinalIgnoreCase))) {
+        throw 'Historical recovery state root escapes its trusted anchor.'
+    }
     if (-not ($pathFull -eq $rootFull -or $pathFull.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase))) {
         throw 'Historical recovery path escapes the state root.'
     }
     $current = $pathFull
-    while ($current -and $current.Length -ge $rootFull.Length) {
+    while ($current -and $current.Length -ge $anchorFull.Length) {
         if (Test-Path -LiteralPath $current) {
             if ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
                 throw "Reparse points are not permitted in historical recovery paths: $current"
             }
         }
-        if ($current.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) { break }
+        if ($current.Equals($anchorFull, [StringComparison]::OrdinalIgnoreCase)) { break }
         $current = [IO.Path]::GetDirectoryName($current)
+    }
+    if (-not $current -or -not $current.Equals($anchorFull, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Historical recovery path could not be traced to its trusted anchor.'
     }
 }
 
@@ -221,6 +232,7 @@ function Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest {
         [Parameter(Mandatory = $true)][object]$Record,
         [Parameter(Mandatory = $true)][string]$TerminalPath,
         [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$TrustedAnchor,
         [Parameter(Mandatory = $true)][object]$Manifest
     )
     Assert-HistoricalRecoveryTerminalRecordAgainstManifest -Record $Record -Manifest $Manifest
@@ -233,7 +245,7 @@ function Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest {
     $auditPath = Join-Path $StateRoot "audit/$($c.ApprovalCommentId)-recovery.json"
     $archivePath = Join-Path $StateRoot "archive/pending/$($c.ApprovalCommentId).json"
     foreach ($evidencePath in @($terminalFull, $auditPath, $archivePath)) {
-        Assert-HistoricalNoReparsePath -Root $StateRoot -Path $evidencePath
+        Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $StateRoot -Path $evidencePath
     }
     if (-not (Test-Path -LiteralPath $auditPath -PathType Leaf) -or
         -not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
@@ -278,7 +290,7 @@ function Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest {
     # the immutable runtime results so a fabricated audit/archive/terminal trio
     # cannot bypass the five automatic-iteration record.
     $runtimePath = Join-Path $StateRoot "runtime/$($c.ApprovalCommentId)"
-    Assert-HistoricalNoReparsePath -Root $StateRoot -Path $runtimePath
+    Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $StateRoot -Path $runtimePath
     if (-not (Test-Path -LiteralPath $runtimePath -PathType Container)) {
         throw 'Historical runtime evidence directory is required.'
     }
@@ -292,7 +304,7 @@ function Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest {
     $auditIterations = @(Get-RecoveryRequiredProperty $auditRecovery 'iteration_results')
     for ($i = 1; $i -le $c.Iterations; $i++) {
         $resultPath = Join-Path $runtimePath "iteration-$i/codex-result.json"
-        Assert-HistoricalNoReparsePath -Root $StateRoot -Path $resultPath
+        Assert-HistoricalNoReparsePath -TrustedAnchor $TrustedAnchor -Root $StateRoot -Path $resultPath
         if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
             throw "Historical runtime result is missing at iteration $i."
         }
@@ -323,8 +335,9 @@ function Assert-HistoricalRecoveryEvidenceArtifacts {
         [Parameter(Mandatory = $true)][string]$TerminalPath,
         [Parameter(Mandatory = $true)][string]$StateRoot
     )
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest -Record $Record -TerminalPath $TerminalPath `
-        -StateRoot $StateRoot -Manifest (Get-ProductionHistoricalEvidenceManifest)
+        -StateRoot $StateRoot -TrustedAnchor $repositoryRoot -Manifest (Get-ProductionHistoricalEvidenceManifest)
 }
 
 function Get-HistoricalSettlementKey {

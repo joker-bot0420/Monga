@@ -7,6 +7,7 @@ $script = Join-Path $bridge 'settle-tollgate-history.ps1'
 $common = Join-Path $bridge 'Tollgate.HistoricalRecovery.ps1'
 $executor = Join-Path $bridge 'run-tollgate-task.ps1'
 $reporter = Join-Path $bridge 'report-tollgate-result.ps1'
+$reporterFixture = Join-Path $PSScriptRoot 'Invoke-HistoricalReporterFixture.ps1'
 $lockModule = Join-Path (Split-Path $bridge -Parent) 'tollgate-orchestrator/Orchestrator.Lock.ps1'
 . $common
 . $lockModule
@@ -62,46 +63,11 @@ function Invoke-HistoricalReporterDryRun([string]$Root) {
     $saved = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $reporter `
-            -HistoricalRecovery -DryRun -ResultFile (Join-Path $Root "failed\$id.json") `
-            -SyntheticHistoricalStateRoot $Root -SyntheticHistoricalManifestPath (Join-Path $Root 'evidence-manifest.json') 2>&1
+        $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $reporterFixture `
+            -DryRun -StateRoot $Root -EvidenceManifestPath (Join-Path $Root 'evidence-manifest.json') `
+            -ResultFile (Join-Path $Root "failed\$id.json") -ExitCodeFile (Join-Path $Root 'dry-run.exit') 2>&1
         return [pscustomobject]@{ ExitCode=$LASTEXITCODE; Output=@($output) }
     } finally { $ErrorActionPreference = $saved }
-}
-
-function New-FakeGhAdapter([string]$Root) {
-    $adapterScript = Join-Path $Root 'fake-gh.ps1'
-    $escapedRoot = $Root.Replace("'", "''")
-    $source = @"
-param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$Arguments)
-`$utf8=[Text.UTF8Encoding]::new(`$false,`$true);[Console]::OutputEncoding=`$utf8
-`$root='$escapedRoot';`$comments=Join-Path `$root 'mock-comments.json';`$count=Join-Path `$root 'mock-create-count.txt'
-if(`$Arguments[0]-eq'auth'){exit 0}
-if(`$Arguments[0]-eq'api'){
-  `$endpoint=`$Arguments[-1]
-  if(`$endpoint-eq'user'){Write-Output '{"login":"joker-bot0420"}';exit 0}
-  if(`$endpoint-eq'repos/joker-bot0420/Monga/pulls/23'){Write-Output '{"number":23,"state":"closed","merged_at":"2026-09-07T00:31:07Z"}';exit 0}
-  if(`$endpoint-like'repos/joker-bot0420/Monga/issues/23/comments*'){if(Test-Path `$comments){Get-Content `$comments -Raw}else{Write-Output '[]'};exit 0}
-  if(`$endpoint-eq'repos/joker-bot0420/Monga/issues/comments/777'){`$all=Get-Content `$comments -Raw|ConvertFrom-Json;ConvertTo-Json -InputObject @(`$all)[0] -Depth 10 -Compress;exit 0}
-  exit 4
-}
-if(`$Arguments[0]-eq'pr'-and`$Arguments[1]-eq'comment'){
-  `$bodyFile=`$Arguments[([Array]::IndexOf(`$Arguments,'--body-file')+1)];`$body=[IO.File]::ReadAllText(`$bodyFile,[Text.UTF8Encoding]::new(`$false,`$true))
-  `$item=[ordered]@{id=777;html_url='https://github.com/joker-bot0420/Monga/pull/23#issuecomment-777';issue_url='https://api.github.com/repos/joker-bot0420/Monga/issues/23';body=`$body;user=@{login='joker-bot0420'}}
-  `$json=ConvertTo-Json -InputObject @(`$item) -Depth 10;[IO.File]::WriteAllText(`$comments,`$json,[Text.UTF8Encoding]::new(`$false,`$true));[IO.File]::AppendAllText(`$count,"1`n")
-  Write-Output `$item.html_url;exit 0
-}
-exit 5
-"@
-    [IO.File]::WriteAllText($adapterScript, $source, $utf8)
-    return $adapterScript
-}
-
-function Start-HistoricalReporterPublish([string]$Root,[string]$Adapter) {
-    $args=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$reporter,'-HistoricalRecovery','-Publish','-ResultFile',(Join-Path $Root "failed\$id.json"),'-SyntheticHistoricalStateRoot',$Root,'-SyntheticHistoricalManifestPath',(Join-Path $Root 'evidence-manifest.json'),'-SyntheticGhExecutable',$Adapter)
-    $token=[Guid]::NewGuid().ToString('N');$stdout=Join-Path $Root "$token.stdout";$stderr=Join-Path $Root "$token.stderr"
-    $process=Start-Process powershell.exe -ArgumentList $args -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    return [pscustomobject]@{Process=$process;Stdout=$stdout;Stderr=$stderr}
 }
 
 function Assert-Fails([scriptblock]$Action, [string]$Name) {
@@ -110,6 +76,32 @@ function Assert-Fails([scriptblock]$Action, [string]$Name) {
 }
 
 try {
+    $tokens=$null;$parseErrors=$null
+    $reporterAst=[Management.Automation.Language.Parser]::ParseFile($reporter,[ref]$tokens,[ref]$parseErrors)
+    if($parseErrors.Count){throw 'Production reporter parser validation failed.'}
+    $productionParameters=@($reporterAst.ParamBlock.Parameters|ForEach-Object{$_.Name.VariablePath.UserPath})
+    foreach ($forbidden in @('SyntheticHistoricalStateRoot','SyntheticHistoricalManifestPath','SyntheticGhExecutable')) {
+        if ($productionParameters -contains $forbidden) { throw "Production reporter still exposes test-only parameter: $forbidden" }
+    }
+    if ((Get-Content -LiteralPath $reporter -Raw) -match 'SyntheticHistorical|SyntheticGh|MockPublication') {
+        throw 'Production reporter still contains a hidden synthetic historical seam.'
+    }
+    $fixtureAst=[Management.Automation.Language.Parser]::ParseFile($reporterFixture,[ref]$tokens,[ref]$parseErrors)
+    if($parseErrors.Count){throw 'Reporter fixture parser validation failed.'}
+    if (@($fixtureAst.ParamBlock.Parameters|ForEach-Object{$_.Name.VariablePath.UserPath}) -contains 'GhExecutable') {
+        throw 'Test-only reporter fixture accepts an executable GitHub transport.'
+    }
+    $savedPreference=$ErrorActionPreference;$ErrorActionPreference='Continue'
+    try{
+        $bindingOutput=& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $reporter -SyntheticHistoricalStateRoot $suite 2>&1;$bindingExit=$LASTEXITCODE
+        $fixtureBinding=& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $reporterFixture -GhExecutable gh 2>&1;$fixtureBindingExit=$LASTEXITCODE
+    }finally{$ErrorActionPreference=$savedPreference}
+    if($bindingExit-eq0-or(@($bindingOutput)-join"`n")-notmatch'parameter.*SyntheticHistoricalStateRoot'){
+        throw 'Production reporter did not reject the removed synthetic state parameter during CLI binding.'
+    }
+    if($fixtureBindingExit-eq0-or(@($fixtureBinding)-join"`n")-notmatch'parameter.*GhExecutable'){
+        throw 'Test-only reporter fixture accepted a GitHub executable transport.'
+    }
     $normal = New-Fixture 'normal'
     $r = Invoke-Recovery $normal
     if ($r.ExitCode -ne 0 -or (Test-Path (Join-Path $normal "pending\$id.json")) -or
@@ -119,7 +111,7 @@ try {
     $terminal = Get-Content (Join-Path $normal "failed\$id.json") -Raw -Encoding utf8 | ConvertFrom-Json
     $normalManifest = Get-Content (Join-Path $normal 'evidence-manifest.json') -Raw -Encoding utf8 | ConvertFrom-Json
     Assert-HistoricalRecoveryTerminalRecordAgainstManifest $terminal $normalManifest
-    Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $terminal (Join-Path $normal "failed\$id.json") $normal $normalManifest
+    Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $terminal (Join-Path $normal "failed\$id.json") $normal $suite $normalManifest
     $reporterResult = Invoke-HistoricalReporterDryRun $normal
     if ($reporterResult.ExitCode -ne 0 -or (@($reporterResult.Output) -join "`n") -notmatch '\[TOLLGATE_REPORT_READY\]') {
         throw "Historical reporter main-path DryRun failed: $(@($reporterResult.Output) -join ' | ')"
@@ -156,14 +148,14 @@ try {
 
     $missingAudit=New-Fixture 'missing-audit';$mr=Invoke-Recovery $missingAudit;if($mr.ExitCode-ne 0){throw 'Unable to seed missing-audit fixture.'};Remove-Item (Join-Path $missingAudit "audit\$id-recovery.json") -Force
     $mt=Get-Content (Join-Path $missingAudit "failed\$id.json") -Raw -Encoding utf8|ConvertFrom-Json;$mm=Get-Content (Join-Path $missingAudit 'evidence-manifest.json') -Raw -Encoding utf8|ConvertFrom-Json
-    $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $mt (Join-Path $missingAudit "failed\$id.json") $missingAudit $mm}catch{$blocked=$true};if(-not$blocked){throw 'Historical terminal without audit was accepted.'}
+    $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $mt (Join-Path $missingAudit "failed\$id.json") $missingAudit $suite $mm}catch{$blocked=$true};if(-not$blocked){throw 'Historical terminal without audit was accepted.'}
     $checkpointMismatch=New-Fixture 'checkpoint-mismatch';$cr=Invoke-Recovery $checkpointMismatch;if($cr.ExitCode-ne 0){throw 'Unable to seed checkpoint fixture.'};$ap=Join-Path $checkpointMismatch "audit\$id-recovery.json";$av=Get-Content $ap -Raw -Encoding utf8|ConvertFrom-Json;$av.checkpoint_evidence.body_sha256=('e'*64);Write-Json $ap $av
     $ct=Get-Content (Join-Path $checkpointMismatch "failed\$id.json") -Raw -Encoding utf8|ConvertFrom-Json;$cm=Get-Content (Join-Path $checkpointMismatch 'evidence-manifest.json') -Raw -Encoding utf8|ConvertFrom-Json
-    $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $ct (Join-Path $checkpointMismatch "failed\$id.json") $checkpointMismatch $cm}catch{$blocked=$true};if(-not$blocked){throw 'Checkpoint evidence mismatch was accepted.'}
+    $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $ct (Join-Path $checkpointMismatch "failed\$id.json") $checkpointMismatch $suite $cm}catch{$blocked=$true};if(-not$blocked){throw 'Checkpoint evidence mismatch was accepted.'}
 
     $missingRuntime=New-Fixture 'missing-runtime';$rr=Invoke-Recovery $missingRuntime;if($rr.ExitCode-ne 0){throw 'Unable to seed missing-runtime fixture.'};Remove-Item (Join-Path $missingRuntime "runtime\$id") -Recurse -Force
     $rt=Get-Content (Join-Path $missingRuntime "failed\$id.json") -Raw -Encoding utf8|ConvertFrom-Json;$rm=Get-Content (Join-Path $missingRuntime 'evidence-manifest.json') -Raw -Encoding utf8|ConvertFrom-Json
-    $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $rt (Join-Path $missingRuntime "failed\$id.json") $missingRuntime $rm}catch{$blocked=$true};if(-not$blocked){throw 'Historical terminal without runtime evidence was accepted.'}
+    $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $rt (Join-Path $missingRuntime "failed\$id.json") $missingRuntime $suite $rm}catch{$blocked=$true};if(-not$blocked){throw 'Historical terminal without runtime evidence was accepted.'}
 
     foreach($runtimeCase in @(
         @{Name='missing-iteration';Mutate={param($root)Remove-Item (Join-Path $root "runtime\$id\iteration-3") -Recurse -Force}},
@@ -172,7 +164,7 @@ try {
     )){
         $root=New-Fixture $runtimeCase.Name;$seed=Invoke-Recovery $root;if($seed.ExitCode-ne 0){throw "Unable to seed $($runtimeCase.Name) fixture."};& $runtimeCase.Mutate $root
         $terminal=Get-Content (Join-Path $root "failed\$id.json") -Raw -Encoding utf8|ConvertFrom-Json;$manifest=Get-Content (Join-Path $root 'evidence-manifest.json') -Raw -Encoding utf8|ConvertFrom-Json
-        $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $terminal (Join-Path $root "failed\$id.json") $root $manifest}catch{$blocked=$true};if(-not$blocked){throw "Runtime evidence case was accepted: $($runtimeCase.Name)"}
+        $blocked=$false;try{Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest $terminal (Join-Path $root "failed\$id.json") $root $suite $manifest}catch{$blocked=$true};if(-not$blocked){throw "Runtime evidence case was accepted: $($runtimeCase.Name)"}
         $reporterResult = Invoke-HistoricalReporterDryRun $root
         if ($reporterResult.ExitCode -eq 0) { throw "Reporter main path accepted invalid runtime evidence: $($runtimeCase.Name)" }
     }
@@ -278,6 +270,45 @@ try {
         if($jr.ExitCode-eq 0){throw 'Executor accepted a reparse-point lock parent.'}
     }else{Write-Output "SKIP: junction escape fixture unavailable: $(@($mklink)-join' ')"}
 
+    # The trusted anchor, not StateRoot, must drive the walk.  These fixtures
+    # put junctions one and two levels above StateRoot while preserving a
+    # lexically valid tests/state prefix.
+    $anchor = Join-Path $PSScriptRoot 'state'
+    foreach ($depth in @(1,2)) {
+        $container = Join-Path $suite "ancestor-junction-$depth"
+        [void][IO.Directory]::CreateDirectory($container)
+        $outsideRoot = Join-Path $suite "ancestor-outside-$depth"
+        [void][IO.Directory]::CreateDirectory((Join-Path $outsideRoot 'state-root'))
+        $linkParent = if ($depth -eq 1) { $container } else { Join-Path $container 'level-one' }
+        [void][IO.Directory]::CreateDirectory($linkParent)
+        $link = Join-Path $linkParent 'link'
+        $linkResult = & cmd.exe /c "mklink /J `"$link`" `"$outsideRoot`"" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $escapedRoot = Join-Path $link 'state-root'
+            $escapedTarget = Join-Path $escapedRoot 'failed/5563219043.json'
+            $blocked = $false
+            try { Assert-HistoricalNoReparsePath -TrustedAnchor $anchor -Root $escapedRoot -Path $escapedTarget } catch { $blocked = $true }
+            if (-not $blocked) { throw "Historical validator accepted an ancestor junction at depth $depth." }
+            if (Test-Path -LiteralPath $escapedTarget) { throw 'Rejected ancestor junction wrote outside the trusted anchor.' }
+        } else { Write-Output "SKIP: ancestor junction depth $depth unavailable: $(@($linkResult)-join' ')" }
+    }
+    foreach($relativeParent in @('orchestrator','runtime','archive/pending','failed')) {
+        $caseName='reparse-' + $relativeParent.Replace('/','-')
+        $caseRoot=Join-Path $suite $caseName
+        [void][IO.Directory]::CreateDirectory($caseRoot)
+        $outsideRoot=Join-Path $suite ($caseName+'-outside')
+        [void][IO.Directory]::CreateDirectory($outsideRoot)
+        $parent=Join-Path $caseRoot $relativeParent
+        [void][IO.Directory]::CreateDirectory((Split-Path $parent -Parent))
+        $linkResult=& cmd.exe /c "mklink /J `"$parent`" `"$outsideRoot`"" 2>&1
+        if($LASTEXITCODE-eq0){
+            $target=Join-Path $parent 'probe.json';$blocked=$false
+            try{Assert-HistoricalNoReparsePath -TrustedAnchor $anchor -Root $caseRoot -Path $target}catch{$blocked=$true}
+            if(-not$blocked){throw "Historical validator accepted reparse parent: $relativeParent"}
+            if(Test-Path -LiteralPath (Join-Path $outsideRoot 'probe.json')){throw "Rejected $relativeParent reparse wrote outside target."}
+        }else{Write-Output "SKIP: $relativeParent reparse fixture unavailable: $(@($linkResult)-join' ')"}
+    }
+
     $releasePath=Join-Path $suite 'process-failure/orchestrator.lock';[void][IO.Directory]::CreateDirectory((Split-Path $releasePath -Parent))
     $escaped=$releasePath.Replace("'","''");$code=". '$($lockModule.Replace("'","''"))'; `$h=Enter-TollgateOrchestratorLock '$escaped'; exit 7"
     $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code));& powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded
@@ -305,13 +336,16 @@ try {
     $blocked=$false; try { Assert-HistoricalReportedRecord $reportedFixture $id $key ('e' * 64) } catch { $blocked=$true }
     if (-not $blocked) { throw 'Conflicting historical reported hash was accepted.' }
 
-    $publishRoot=New-Fixture 'reporter-main-publish';$seed=Invoke-Recovery $publishRoot;if($seed.ExitCode-ne 0){throw 'Unable to seed reporter publish fixture.'};$adapter=New-FakeGhAdapter $publishRoot
-    $r1=Start-HistoricalReporterPublish $publishRoot $adapter;$r2=Start-HistoricalReporterPublish $publishRoot $adapter
+    $publishRoot=New-Fixture 'reporter-main-publish';$seed=Invoke-Recovery $publishRoot;if($seed.ExitCode-ne 0){throw 'Unable to seed reporter publish fixture.'}
+    $reporterArguments=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$reporterFixture,'-MockPublish','-StateRoot',$publishRoot,'-EvidenceManifestPath',(Join-Path $publishRoot 'evidence-manifest.json'),'-ResultFile',(Join-Path $publishRoot "failed\$id.json"))
+    function Start-FixtureReporter { $token=[guid]::NewGuid().ToString('N');$stdout=Join-Path $publishRoot "$token.stdout";$stderr=Join-Path $publishRoot "$token.stderr";$exitFile=Join-Path $publishRoot "$token.exit";$p=Start-Process powershell.exe -ArgumentList ($reporterArguments+@('-ExitCodeFile',$exitFile)) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr;[pscustomobject]@{Process=$p;Stdout=$stdout;Stderr=$stderr;ExitFile=$exitFile} }
+    $r1=Start-FixtureReporter;$r2=Start-FixtureReporter
     $process1=$r1.Process;$process2=$r2.Process;$process1.WaitForExit();$process2.WaitForExit()
+    $exit1=[int](Get-Content $r1.ExitFile -Raw);$exit2=[int](Get-Content $r2.ExitFile -Raw)
     $stderr1=Get-Content $r1.Stderr -Raw;$stderr2=Get-Content $r2.Stderr -Raw;$stdout1=Get-Content $r1.Stdout -Raw;$stdout2=Get-Content $r2.Stdout -Raw
-    if(-not[string]::IsNullOrWhiteSpace($stderr1)-or-not[string]::IsNullOrWhiteSpace($stderr2)-or
+    if($exit1-ne0-or$exit2-ne0-or-not[string]::IsNullOrWhiteSpace($stderr1)-or-not[string]::IsNullOrWhiteSpace($stderr2)-or
        ($stdout1+$stdout2)-notmatch'TOLLGATE_REPORT_READY'-or($stdout1+$stdout2)-notmatch'TOLLGATE_RESULT_ALREADY_REPORTED'){
-        throw "Concurrent historical reporter failed: $stderr1 | $stderr2 | $stdout1 | $stdout2"
+        throw "Concurrent historical reporter failed: exits=$exit1,$exit2 | $stderr1 | $stderr2 | $stdout1 | $stdout2"
     };$process1.Dispose();$process2.Dispose()
     $creates=@(Get-Content (Join-Path $publishRoot 'mock-create-count.txt'));if($creates.Count-ne 1){throw "Concurrent historical reporters created $($creates.Count) comments."}
     $reportedPath=Join-Path $publishRoot "reported\$id.json";if(-not(Test-Path $reportedPath -PathType Leaf)){throw 'Historical reporter main path did not atomically create reported state.'}
@@ -320,7 +354,7 @@ try {
     Write-Output 'PASS: orchestrator/task lock contention blocks recovery and direct RunPending; process exit releases locks.'
     Write-Output 'PASS: direct RunPending exact-byte TOCTOU checks and lock-path reparse checks fail closed before Codex.'
     Write-Output 'PASS: normal open-PR behavior, merged-PR isolation, comment adoption and collision fail-closed behavior.'
-    Write-Output 'PASS: historical reporter main-path DryRun and concurrent mocked Publish use runtime validation and exactly one create.'
+    Write-Output 'PASS: production reporter exposes no synthetic trust seam; test-only fixture concurrent mock publication validates both child exit codes and exactly one create.'
     Write-Output 'PASS: no Codex child process, GitHub API, live queue or production state was used.'
 } finally {
     if (Test-Path $suite) { Remove-Item $suite -Recurse -Force }
