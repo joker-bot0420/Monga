@@ -68,6 +68,7 @@ internal class DefaultEpisodicMemorySelector(
 
             is TemporalIntent.ExactDate ->
                 selectExplicitRange(
+                    query = userMessage,
                     candidates = scored,
                     startInclusive = intent.date,
                     endExclusive = intent.date.plusDays(1),
@@ -76,6 +77,7 @@ internal class DefaultEpisodicMemorySelector(
 
             is TemporalIntent.DateRange ->
                 selectExplicitRange(
+                    query = userMessage,
                     candidates = scored,
                     startInclusive = intent.startInclusive,
                     endExclusive = intent.endExclusive,
@@ -114,6 +116,7 @@ internal class DefaultEpisodicMemorySelector(
     }
 
     private fun selectExplicitRange(
+        query: String,
         candidates: List<ScoredMemory>,
         startInclusive: LocalDate,
         endExclusive: LocalDate,
@@ -129,7 +132,11 @@ internal class DefaultEpisodicMemorySelector(
         }
 
         val relevant = inRange.filter { it.score >= MIN_SCORE }
-        val source = if (relevant.isNotEmpty()) relevant else inRange
+        val source = when {
+            relevant.isNotEmpty() -> relevant
+            hasGenericEventRecall(query) -> inRange
+            else -> return emptyList()
+        }
 
         return source
             .sortedWith(
@@ -161,7 +168,7 @@ internal class DefaultEpisodicMemorySelector(
                 .map { it.memory }
         }
 
-        if (hasReferentialHint(query)) {
+        if (hasReferentialHint(query) || !hasGenericEventRecall(query)) {
             return emptyList()
         }
 
@@ -228,6 +235,19 @@ internal class DefaultEpisodicMemorySelector(
             "여러",
             "일들",
             "것들",
+        ).any(normalized::contains)
+    }
+
+    private fun hasGenericEventRecall(query: String): Boolean {
+        val normalized = query.lowercase()
+        return listOf(
+            "뭐 했",
+            "뭐했",
+            "뭘 했",
+            "뭘했",
+            "무슨 일",
+            "어떤 일",
+            "일 있었",
         ).any(normalized::contains)
     }
 
