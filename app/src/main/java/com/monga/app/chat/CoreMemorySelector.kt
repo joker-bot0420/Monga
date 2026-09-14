@@ -212,8 +212,8 @@ internal object DefaultCoreMemorySelector : CoreMemorySelector {
         text
             .split(' ')
             .asSequence()
-            .map(String::trim)
-            .filter(String::isNotEmpty)
+            .map { token -> token.trim() }
+            .filter { token -> token.isNotEmpty() }
             .map(::stripSuffix)
             .filter { token -> token.length >= 2 }
             .filterNot(stopWords::contains)
