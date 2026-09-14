@@ -209,19 +209,7 @@ internal object DefaultCoreMemorySelector : CoreMemorySelector {
             if (' ' in normalizedMarker) {
                 text.contains(normalizedMarker)
             } else {
-                val markerToken = stripTopicSuffix(normalizedMarker)
-                val isKoreanMarker = markerToken.any { char ->
-                    char in '가'..'힣'
-                }
-
-                tokens.any { token ->
-                    token == markerToken ||
-                        (
-                            isKoreanMarker &&
-                                markerToken.isNotEmpty() &&
-                                token.startsWith(markerToken)
-                            )
-                }
+                normalizedMarker in tokens
             }
         }
     }
@@ -238,7 +226,16 @@ internal object DefaultCoreMemorySelector : CoreMemorySelector {
             .asSequence()
             .map(String::trim)
             .filter(String::isNotEmpty)
-            .map(::stripTopicSuffix)
+            .flatMap { token ->
+                sequenceOf(
+                    token,
+                    stripSuffix(
+                        token = token,
+                        minimumStemLength = 1,
+                    ),
+                )
+            }
+            .filter(String::isNotEmpty)
             .toSet()
 
     private fun keywords(text: String): Set<String> =
@@ -251,12 +248,6 @@ internal object DefaultCoreMemorySelector : CoreMemorySelector {
             .filter { token -> token.length >= 2 }
             .filterNot(stopWords::contains)
             .toSet()
-
-    private fun stripTopicSuffix(token: String): String =
-        stripSuffix(
-            token = token,
-            minimumStemLength = 1,
-        )
 
     private fun stripSuffix(token: String): String =
         stripSuffix(
