@@ -74,6 +74,17 @@ class EpisodicMemorySelectorTest {
     }
 
     @Test
+    fun exactDateAcceptsWeakTopicEvidenceAfterTimeFiltering() {
+        val result = selector.select(
+            userMessage = "9월 10일에 회사 어땠지?",
+            memories = memories,
+            today = today,
+        )
+
+        assertEquals(listOf(1L), result.map { it.id })
+    }
+
+    @Test
     fun genericRecentRecallFallsBackToNewestEpisode() {
         val result = selector.select(
             userMessage = "최근에 뭐 했었지?",
