@@ -49,7 +49,7 @@ class MongaApplication : Application() {
             tokenCounter = { text ->
                 LlamaNativeBridge.nativeCountChatTokens(
                     roles = arrayOf(
-                        InferenceRole.SYSTEM.wireValue,
+                        InferenceRole.USER.wireValue,
                     ),
                     contents = arrayOf(text),
                 )
