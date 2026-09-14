@@ -21,6 +21,11 @@ class DefaultSystemPromptProviderTest {
         assertTrue(prompt.contains("[페르소나]"))
         assertTrue(prompt.contains("- 친근하게 대화한다."))
         assertTrue(prompt.contains("규칙:"))
+        assertTrue(
+            prompt.contains(
+                "- 추측한 내용을 user의 사실이나 기억으로 단정하지 마라."
+            )
+        )
         assertFalse(prompt.contains("[사용자 기억]"))
         assertFalse(prompt.contains("녹차"))
 
