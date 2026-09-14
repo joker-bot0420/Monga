@@ -60,7 +60,7 @@ class CoreMemoryGateIntegrationTest {
     }
 
     @Test
-    fun recallRequestBuildsMemoryAndAttachesItOnlyToLatestUserInferenceCopy() =
+    fun recallRequestSuppressesPriorAssistantAndAttachesMemoryToLatestUser() =
         runBlocking {
             val store = RecordingChatStore().apply {
                 seed(MessageRole.USER, "오늘 기분 어때?")
@@ -96,6 +96,13 @@ class CoreMemoryGateIntegrationTest {
             assertFalse(system.content.contains("[사용자 기억]"))
             assertFalse(system.content.contains("녹차"))
 
+            assertFalse(
+                engine.receivedMessages.any {
+                    it.role == InferenceRole.ASSISTANT &&
+                        it.content == "오늘 기분이 좋구요. 😊"
+                }
+            )
+
             val userMessages = engine.receivedMessages.filter {
                 it.role == InferenceRole.USER
             }
@@ -106,6 +113,11 @@ class CoreMemoryGateIntegrationTest {
             assertTrue(latestUser.contains("- 사용자는 녹차를 좋아한다."))
             assertTrue(latestUser.contains("[현재 질문]"))
             assertTrue(latestUser.endsWith("내가 좋아하는 음료가 뭐였지?"))
+
+            val persistedAssistant = store.savedMessages.first {
+                it.role == MessageRole.ASSISTANT
+            }
+            assertEquals("오늘 기분이 좋구요. 😊", persistedAssistant.content)
 
             val persistedCurrentUser = store.savedMessages.last {
                 it.role == MessageRole.USER
