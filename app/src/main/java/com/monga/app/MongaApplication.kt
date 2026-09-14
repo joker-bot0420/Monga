@@ -2,19 +2,20 @@ package com.monga.app
 
 import android.app.Application
 import com.monga.app.chat.ChatCoordinator
+import com.monga.app.chat.DefaultCoreMemoryProvider
+import com.monga.app.chat.DefaultCoreMemoryRelevanceGate
+import com.monga.app.chat.DefaultPersonaProvider
+import com.monga.app.chat.DefaultSystemPromptProvider
 import com.monga.app.data.MongaRepository
 import com.monga.app.data.backup.SafBackupStore
 import com.monga.app.data.local.MongaDatabase
 import com.monga.app.data.model.ModelPreferences
 import com.monga.app.data.model.ModelStore
+import com.monga.app.inference.InferenceRole
 import com.monga.app.inference.LlamaInferenceEngine
 import com.monga.app.inference.LlamaModelLoader
-import java.io.File
-import com.monga.app.chat.DefaultSystemPromptProvider
-import com.monga.app.chat.DefaultCoreMemoryProvider
-import com.monga.app.inference.InferenceRole
 import com.monga.app.inference.LlamaNativeBridge
-import com.monga.app.chat.DefaultPersonaProvider
+import java.io.File
 
 class MongaApplication : Application() {
     val repository by lazy {
@@ -44,23 +45,26 @@ class MongaApplication : Application() {
     }
 
     val chatCoordinator by lazy {
+        val coreMemoryProvider = DefaultCoreMemoryProvider(
+            coreMemories = repository.coreMemories,
+            tokenCounter = { text ->
+                LlamaNativeBridge.nativeCountChatTokens(
+                    roles = arrayOf(
+                        InferenceRole.SYSTEM.wireValue,
+                    ),
+                    contents = arrayOf(text),
+                )
+            },
+        )
+
         ChatCoordinator(
             chatStore = repository,
             inferenceEngine = inferenceEngine,
             systemPromptProvider = DefaultSystemPromptProvider(
                 personaProvider = DefaultPersonaProvider(),
-                coreMemoryProvider = DefaultCoreMemoryProvider(
-                    coreMemories = repository.coreMemories,
-                    tokenCounter = { text ->
-                        LlamaNativeBridge.nativeCountChatTokens(
-                            roles = arrayOf(
-                                InferenceRole.SYSTEM.wireValue,
-                            ),
-                            contents = arrayOf(text),
-                        )
-                    },
-                ),
             ),
+            coreMemoryProvider = coreMemoryProvider,
+            coreMemoryRelevanceGate = DefaultCoreMemoryRelevanceGate,
         )
     }
 }
