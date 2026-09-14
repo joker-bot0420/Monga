@@ -45,4 +45,18 @@ $root = New-Case 'report-error'
 [IO.File]::WriteAllText((Join-Path $root 'completed/1.json'), '{}')
 Assert-Fails { & $entry -Synthetic -StateRoot $root -PrepareStage $ok -ExecutorStage $never -ReporterStage { 3 } }
 if (Test-Path (Join-Path $root 'reported')) { throw 'False reported state.' }
+
+# The descendant lock parent must be checked before the lock module can follow
+# a junction outside the isolated state root.
+$junctionRoot = New-Case 'lock-parent-junction'
+$outside = Join-Path $suite 'junction-outside'
+[void][IO.Directory]::CreateDirectory($outside)
+$junction = Join-Path $junctionRoot 'orchestrator'
+$mklink = & cmd.exe /c "mklink /J `"$junction`" `"$outside`"" 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Assert-Fails { & $entry -Synthetic -StateRoot $junctionRoot -PrepareStage $ok -ExecutorStage $never -ReporterStage $never }
+    if (Test-Path -LiteralPath (Join-Path $outside 'orchestrator.lock')) { throw 'Rejected reparse lock parent created an external lock file.' }
+} else {
+    Write-Output "SKIP: junction lock-parent fixture unavailable: $(@($mklink) -join ' ')"
+}
 Write-Output "PASS: no-work, pending, completed/failed routing, prepare/executor/reporter errors, lock release. Fixtures: $suite"

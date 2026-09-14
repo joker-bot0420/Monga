@@ -126,7 +126,14 @@ function Get-ProtectedControlRelativePaths {
         'tools/tollgate-bridge/run-tollgate-task.ps1','tools/tollgate-bridge/tollgate-result.schema.json',
         'tools/tollgate-bridge/tollgate-loop-result.schema.json','tools/tollgate-bridge/report-tollgate-result.ps1',
         'tools/tollgate-bridge/Tollgate.HistoricalRecovery.ps1','tools/tollgate-bridge/settle-tollgate-history.ps1',
-        'tools/tollgate-bridge/historical-recovery.schema.json','tools/tollgate-orchestrator/Orchestrator.Lock.ps1'
+        'tools/tollgate-bridge/historical-recovery.schema.json',
+        'tools/tollgate-orchestrator/run-tollgate-orchestrator.ps1',
+        'tools/tollgate-orchestrator/Orchestrator.Lock.ps1',
+        'tools/tollgate-orchestrator/Orchestrator.BridgeStages.ps1',
+        'tools/tollgate-orchestrator/Orchestrator.ExecutorEnvironment.ps1',
+        'tools/tollgate-orchestrator/Orchestrator.Scheduler.ps1',
+        'tools/tollgate-orchestrator/install-tollgate-scheduler.ps1',
+        'tools/tollgate-orchestrator/uninstall-tollgate-scheduler.ps1'
     )
 }
 
@@ -145,7 +152,7 @@ function Assert-ProtectedControlHashesUnchanged {
 }
 
 function Invoke-ProtectionSelfTest {
-    $required=@('tools/tollgate-orchestrator/Orchestrator.Lock.ps1','tools/tollgate-bridge/report-tollgate-result.ps1','tools/tollgate-bridge/Tollgate.HistoricalRecovery.ps1','tools/tollgate-bridge/settle-tollgate-history.ps1','tools/tollgate-bridge/historical-recovery.schema.json','tools/tollgate-bridge/watch-tollgate.ps1')
+    $required=@('tools/tollgate-orchestrator/run-tollgate-orchestrator.ps1','tools/tollgate-orchestrator/Orchestrator.Lock.ps1','tools/tollgate-orchestrator/Orchestrator.BridgeStages.ps1','tools/tollgate-orchestrator/Orchestrator.ExecutorEnvironment.ps1','tools/tollgate-orchestrator/Orchestrator.Scheduler.ps1','tools/tollgate-orchestrator/install-tollgate-scheduler.ps1','tools/tollgate-orchestrator/uninstall-tollgate-scheduler.ps1','tools/tollgate-bridge/report-tollgate-result.ps1','tools/tollgate-bridge/Tollgate.HistoricalRecovery.ps1','tools/tollgate-bridge/settle-tollgate-history.ps1','tools/tollgate-bridge/historical-recovery.schema.json','tools/tollgate-bridge/watch-tollgate.ps1')
     $actual=@(Get-ProtectedControlRelativePaths);foreach($path in $required){if($path-cnotin$actual){throw "Required protected canonical path is absent: $path"}}
     $root=Join-Path ([IO.Path]::GetTempPath()) "monga-protection-$([Guid]::NewGuid().ToString('N'))"
     try{

@@ -122,6 +122,39 @@ function Assert-HistoricalRecoveryMetadataAgainstManifest {
     }
 }
 
+function Assert-HistoricalNoReparsePath {
+    param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$Path)
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $pathFull = [IO.Path]::GetFullPath($Path)
+    if (-not ($pathFull -eq $rootFull -or $pathFull.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase))) {
+        throw 'Historical recovery path escapes the state root.'
+    }
+    $current = $pathFull
+    while ($current -and $current.Length -ge $rootFull.Length) {
+        if (Test-Path -LiteralPath $current) {
+            if ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Reparse points are not permitted in historical recovery paths: $current"
+            }
+        }
+        if ($current.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) { break }
+        $current = [IO.Path]::GetDirectoryName($current)
+    }
+}
+
+function Enter-HistoricalReporterTaskLock {
+    param([Parameter(Mandatory = $true)][string]$LockPath, [int]$TimeoutMilliseconds = 30000)
+    $deadline = [DateTimeOffset]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    while ($true) {
+        try { return Enter-TollgateOrchestratorLock -LockPath $LockPath }
+        catch [IO.IOException] {
+            if ([DateTimeOffset]::UtcNow -ge $deadline) {
+                throw 'Timed out waiting for the historical reporter task lock; no GitHub write was attempted.'
+            }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+}
+
 function Assert-HistoricalRecoveryMetadata {
     param([Parameter(Mandatory = $true)][object]$Recovery)
     Assert-HistoricalRecoveryMetadataAgainstManifest -Recovery $Recovery `
@@ -199,6 +232,9 @@ function Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest {
     }
     $auditPath = Join-Path $StateRoot "audit/$($c.ApprovalCommentId)-recovery.json"
     $archivePath = Join-Path $StateRoot "archive/pending/$($c.ApprovalCommentId).json"
+    foreach ($evidencePath in @($terminalFull, $auditPath, $archivePath)) {
+        Assert-HistoricalNoReparsePath -Root $StateRoot -Path $evidencePath
+    }
     if (-not (Test-Path -LiteralPath $auditPath -PathType Leaf) -or
         -not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
         throw 'Historical recovery audit and archived pending evidence are required.'
@@ -237,6 +273,48 @@ function Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest {
         ((Get-RecoveryRequiredProperty $Record 'recovery') | ConvertTo-Json -Depth 30 -Compress)) {
         throw 'Historical recovery audit metadata does not match the terminal record.'
     }
+
+    # The audit's runtime_source is descriptive metadata, not evidence.  Re-read
+    # the immutable runtime results so a fabricated audit/archive/terminal trio
+    # cannot bypass the five automatic-iteration record.
+    $runtimePath = Join-Path $StateRoot "runtime/$($c.ApprovalCommentId)"
+    Assert-HistoricalNoReparsePath -Root $StateRoot -Path $runtimePath
+    if (-not (Test-Path -LiteralPath $runtimePath -PathType Container)) {
+        throw 'Historical runtime evidence directory is required.'
+    }
+    $runtimeDirectories = @(Get-ChildItem -LiteralPath $runtimePath -Directory -Force | Sort-Object Name)
+    $expectedNames = @(1..$c.Iterations | ForEach-Object { "iteration-$_" })
+    $actualNames = @($runtimeDirectories | ForEach-Object { $_.Name })
+    if (@(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames).Count -ne 0) {
+        throw 'Historical runtime must contain exactly iteration-1 through iteration-5.'
+    }
+    $manifestIterations = @(Get-RecoveryRequiredProperty $Manifest 'iteration_sha256')
+    $auditIterations = @(Get-RecoveryRequiredProperty $auditRecovery 'iteration_results')
+    for ($i = 1; $i -le $c.Iterations; $i++) {
+        $resultPath = Join-Path $runtimePath "iteration-$i/codex-result.json"
+        Assert-HistoricalNoReparsePath -Root $StateRoot -Path $resultPath
+        if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
+            throw "Historical runtime result is missing at iteration $i."
+        }
+        $resultBytes = [IO.File]::ReadAllBytes($resultPath)
+        $resultHash = Get-RecoverySha256 $resultBytes
+        $expectedHash = ([string]$manifestIterations[$i - 1]).ToLowerInvariant()
+        if ($resultHash -cne $expectedHash -or
+            [string](Get-RecoveryRequiredProperty $auditIterations[$i - 1] 'sha256') -cne $expectedHash) {
+            throw "Historical runtime exact-byte SHA-256 is invalid at iteration $i."
+        }
+        $resultText = [Text.UTF8Encoding]::new($false, $true).GetString($resultBytes).TrimStart([char]0xFEFF)
+        $result = $resultText | ConvertFrom-Json
+        if ([string](Get-RecoveryRequiredProperty $result 'status') -cne 'CONTINUE' -or
+            [bool](Get-RecoveryRequiredProperty $result 'requires_user') -or
+            [string]::IsNullOrWhiteSpace([string](Get-RecoveryRequiredProperty $result 'summary')) -or
+            [string]::IsNullOrWhiteSpace([string](Get-RecoveryRequiredProperty $result 'next_action'))) {
+            throw "Historical runtime result contract is invalid at iteration $i."
+        }
+        foreach ($field in @('evidence','changed_files','tests')) {
+            [void](Get-RecoveryRequiredProperty $result $field)
+        }
+    }
 }
 
 function Assert-HistoricalRecoveryEvidenceArtifacts {
@@ -266,9 +344,14 @@ function Find-HistoricalRecoveryComment {
     )
     $needle = "Settlement key: $SettlementKey"
     $matches = @($Comments | Where-Object {
-        [string]$_.user.login -ceq $TrustedUser -and
-        [string]$_.issue_url -ceq $ExpectedIssueUrl -and
-        ([string]$_.body).Contains($needle)
+        $userProperty = $_.PSObject.Properties['user']
+        $issueProperty = $_.PSObject.Properties['issue_url']
+        $bodyProperty = $_.PSObject.Properties['body']
+        if ($null -eq $userProperty -or $null -eq $issueProperty -or $null -eq $bodyProperty -or $null -eq $userProperty.Value) { return $false }
+        $loginProperty = $userProperty.Value.PSObject.Properties['login']
+        $null -ne $loginProperty -and [string]$loginProperty.Value -ceq $TrustedUser -and
+        [string]$issueProperty.Value -ceq $ExpectedIssueUrl -and
+        ([string]$bodyProperty.Value).Contains($needle)
     })
     if ($matches.Count -gt 1) { throw 'Multiple historical recovery comments use the same settlement key.' }
     if ($matches.Count -eq 0) { return $null }

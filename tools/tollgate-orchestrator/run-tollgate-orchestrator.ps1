@@ -29,16 +29,24 @@ $fixturePrefix = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'tests/state'))
 if ($Synthetic -and -not $root.StartsWith($fixturePrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Synthetic state must be beneath tools/tollgate-orchestrator/tests/state/.'
 }
-# Reject junctions/symlinks so a fixture cannot redirect to the actual queue.
-$ancestor = $root
-while ($ancestor) {
-    if (Test-Path -LiteralPath $ancestor) {
-        if ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            throw 'Reparse points are not permitted in synthetic state paths.'
-        }
+function Assert-NoOrchestratorReparsePath([string]$Root, [string]$Path) {
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $pathFull = [IO.Path]::GetFullPath($Path)
+    if (-not ($pathFull -eq $rootFull -or $pathFull.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase))) {
+        throw 'Orchestrator path escapes the state root.'
     }
-    $ancestor = [IO.Path]::GetDirectoryName($ancestor)
+    $current = $pathFull
+    while ($current -and $current.Length -ge $rootFull.Length) {
+        if (Test-Path -LiteralPath $current) {
+            if ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Reparse points are not permitted in orchestrator state paths: $current"
+            }
+        }
+        if ($current.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) { break }
+        $current = [IO.Path]::GetDirectoryName($current)
+    }
 }
+Assert-NoOrchestratorReparsePath $root $root
 function Get-StageFiles([string]$Directory) {
     $path = Join-Path $root $Directory
     if (Test-Path -LiteralPath $path) {
@@ -56,7 +64,9 @@ function Invoke-Stage([scriptblock]$Stage, [string]$InputFile) {
     }
 }
 
-$handle = Enter-TollgateOrchestratorLock -LockPath (Join-Path $root 'orchestrator/orchestrator.lock')
+$orchestratorLockPath = Join-Path $root 'orchestrator/orchestrator.lock'
+Assert-NoOrchestratorReparsePath $root $orchestratorLockPath
+$handle = Enter-TollgateOrchestratorLock -LockPath $orchestratorLockPath
 try {
     # The real prepare stage already invokes watcher before staging approval.
     Invoke-Stage $PrepareStage ''
