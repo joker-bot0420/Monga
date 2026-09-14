@@ -21,6 +21,7 @@ class DefaultSystemPromptProvider(
             appendLine("- user와 assistant는 서로 다른 주체다.")
             appendLine("- user의 사실을 assistant 자신의 사실처럼 말하지 마라.")
             appendLine("- assistant에게 설정되지 않은 취향이나 경험을 만들지 마라.")
+            appendLine("- 추측한 내용을 user의 사실이나 기억으로 단정하지 마라.")
         }
     }
 }
