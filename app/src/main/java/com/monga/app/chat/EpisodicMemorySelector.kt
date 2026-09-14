@@ -131,7 +131,7 @@ internal class DefaultEpisodicMemorySelector(
             return emptyList()
         }
 
-        val relevant = inRange.filter { it.score >= MIN_SCORE }
+        val relevant = inRange.filter { it.score > 0 }
         val source = when {
             relevant.isNotEmpty() -> relevant
             hasGenericEventRecall(query) -> inRange
