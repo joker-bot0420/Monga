@@ -10,7 +10,7 @@ import org.junit.Test
 class DefaultCoreMemoryProviderTest {
 
     @Test
-    fun buildsSelectedMemoryWithinConfiguredBudget() = runBlocking {
+    fun buildsSelectedMemoryWithinConfiguredBudgetInSelectorOrder() = runBlocking {
         val provider = DefaultCoreMemoryProvider(
             coreMemories = flowOf(
                 listOf(
@@ -29,7 +29,9 @@ class DefaultCoreMemoryProviderTest {
                 )
             ),
             tokenCounter = { text -> text.length },
-            selector = CoreMemorySelector { _, memories -> memories },
+            selector = CoreMemorySelector { _, memories ->
+                memories.sortedByDescending { it.updatedAt }
+            },
             tokenBudget = 5,
         )
 
