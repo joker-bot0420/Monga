@@ -15,15 +15,9 @@ internal object CoreMemoryBudgetPolicy {
             return ""
         }
 
-        val prioritized = memories.sortedWith(
-            compareByDescending<CoreMemory> { it.updatedAt }
-                .thenByDescending { it.createdAt }
-                .thenByDescending { it.id }
-        )
-
         val selected = mutableListOf<CoreMemory>()
 
-        for (memory in prioritized) {
+        for (memory in memories) {
             val candidate = selected + memory
             val rendered = render(candidate)
 
