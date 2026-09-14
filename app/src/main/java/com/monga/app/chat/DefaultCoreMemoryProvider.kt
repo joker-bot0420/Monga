@@ -13,7 +13,11 @@ class DefaultCoreMemoryProvider(
 
     override suspend fun buildMemory(): String =
         CoreMemoryBudgetPolicy.build(
-            memories = coreMemories.first(),
+            memories = coreMemories.first().map { memory ->
+                memory.copy(
+                    content = UserMemoryFormatter.format(memory.content),
+                )
+            },
             tokenBudget = tokenBudget,
             tokenCounter = tokenCounter,
         )
