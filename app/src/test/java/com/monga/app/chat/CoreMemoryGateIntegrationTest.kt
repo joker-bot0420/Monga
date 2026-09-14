@@ -32,7 +32,7 @@ class CoreMemoryGateIntegrationTest {
             systemPromptProvider = SystemPromptProvider {
                 "너는 몽아라는 AI다."
             },
-            coreMemoryProvider = CoreMemoryProvider {
+            coreMemoryProvider = CoreMemoryProvider { _ ->
                 memoryBuildCount++
                 "- 사용자는 녹차를 좋아한다."
             },
@@ -60,7 +60,7 @@ class CoreMemoryGateIntegrationTest {
     }
 
     @Test
-    fun recallRequestSuppressesPriorTurnAndAttachesMemoryToLatestUser() =
+    fun recallRequestSuppressesPriorTurnAndAttachesSelectedMemory() =
         runBlocking {
             val store = RecordingChatStore().apply {
                 seed(MessageRole.USER, "오늘 기분 어때?")
@@ -68,6 +68,7 @@ class CoreMemoryGateIntegrationTest {
             }
             val engine = CapturingInferenceEngine()
             var memoryBuildCount = 0
+            var receivedQuery = ""
 
             val coordinator = ChatCoordinator(
                 chatStore = store,
@@ -75,8 +76,9 @@ class CoreMemoryGateIntegrationTest {
                 systemPromptProvider = SystemPromptProvider {
                     "너는 몽아라는 AI다."
                 },
-                coreMemoryProvider = CoreMemoryProvider {
+                coreMemoryProvider = CoreMemoryProvider { query ->
                     memoryBuildCount++
+                    receivedQuery = query
                     "- 사용자는 녹차를 좋아한다."
                 },
                 coreMemoryRelevanceGate = DefaultCoreMemoryRelevanceGate,
@@ -89,6 +91,7 @@ class CoreMemoryGateIntegrationTest {
 
             assertEquals(ChatResult.Completed, result)
             assertEquals(1, memoryBuildCount)
+            assertEquals("내가 좋아하는 음료가 뭐였지?", receivedQuery)
 
             val system = engine.receivedMessages.first {
                 it.role == InferenceRole.SYSTEM
@@ -138,6 +141,51 @@ class CoreMemoryGateIntegrationTest {
                 persistedCurrentUser.content,
             )
             assertFalse(persistedCurrentUser.content.contains("[사용자 기억]"))
+        }
+
+    @Test
+    fun relevantGateWithNoSelectedMemoryKeepsConversationHistoryIntact() =
+        runBlocking {
+            val store = RecordingChatStore().apply {
+                seed(MessageRole.USER, "오늘 기분 어때?")
+                seed(MessageRole.ASSISTANT, "오늘 기분이 좋구요. 😊")
+            }
+            val engine = CapturingInferenceEngine()
+
+            val coordinator = ChatCoordinator(
+                chatStore = store,
+                inferenceEngine = engine,
+                systemPromptProvider = SystemPromptProvider {
+                    "너는 몽아라는 AI다."
+                },
+                coreMemoryProvider = CoreMemoryProvider { _ -> "" },
+                coreMemoryRelevanceGate = DefaultCoreMemoryRelevanceGate,
+            )
+
+            val result = coordinator.send(
+                conversationId = 1L,
+                content = "내 생일이 언제였지?",
+            )
+
+            assertEquals(ChatResult.Completed, result)
+            assertTrue(
+                engine.receivedMessages.any {
+                    it.role == InferenceRole.USER &&
+                        it.content == "오늘 기분 어때?"
+                }
+            )
+            assertTrue(
+                engine.receivedMessages.any {
+                    it.role == InferenceRole.ASSISTANT &&
+                        it.content == "오늘 기분이 좋구요. 😊"
+                }
+            )
+
+            val latestUser = engine.receivedMessages.last {
+                it.role == InferenceRole.USER
+            }
+            assertEquals("내 생일이 언제였지?", latestUser.content)
+            assertFalse(latestUser.content.contains("[사용자 기억]"))
         }
 
     private class RecordingChatStore : ChatStore {
