@@ -1,19 +1,17 @@
 package com.monga.app.chat
 
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DefaultSystemPromptProviderTest {
 
     @Test
-    fun buildsPromptWithPersonaAndCoreMemoryInSeparateSections() = runBlocking {
+    fun buildsStaticPromptWithPersonaAndMemoryRules() = runBlocking {
         val provider = DefaultSystemPromptProvider(
             personaProvider = PersonaProvider {
                 "- 친근하게 대화한다."
-            },
-            coreMemoryProvider = CoreMemoryProvider {
-                "- 사용자는 녹차를 좋아한다."
             },
         )
 
@@ -24,11 +22,11 @@ class DefaultSystemPromptProviderTest {
         assertTrue(prompt.contains("- 친근하게 대화한다."))
         assertTrue(prompt.contains("규칙:"))
         assertTrue(prompt.contains("[사용자 기억]"))
-        assertTrue(prompt.contains("- 사용자는 녹차를 좋아한다."))
+        assertFalse(prompt.contains("녹차"))
 
         assertTrue(
             prompt.indexOf("[페르소나]") <
-                    prompt.indexOf("[사용자 기억]")
+                    prompt.indexOf("규칙:")
         )
     }
 }
