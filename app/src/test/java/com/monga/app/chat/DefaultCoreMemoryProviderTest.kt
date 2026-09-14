@@ -1,16 +1,16 @@
 package com.monga.app.chat
 
 import com.monga.app.data.local.CoreMemory
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import kotlinx.coroutines.flow.MutableStateFlow
 
 class DefaultCoreMemoryProviderTest {
 
     @Test
-    fun buildsMemoryWithinConfiguredBudget() = runBlocking {
+    fun buildsSelectedMemoryWithinConfiguredBudget() = runBlocking {
         val provider = DefaultCoreMemoryProvider(
             coreMemories = flowOf(
                 listOf(
@@ -29,10 +29,11 @@ class DefaultCoreMemoryProviderTest {
                 )
             ),
             tokenCounter = { text -> text.length },
+            selector = CoreMemorySelector { _, memories -> memories },
             tokenBudget = 5,
         )
 
-        val result = provider.buildMemory()
+        val result = provider.buildMemory("query")
 
         assertEquals(
             "- new",
@@ -56,12 +57,12 @@ class DefaultCoreMemoryProviderTest {
         val provider = DefaultCoreMemoryProvider(
             coreMemories = memories,
             tokenCounter = { text -> text.length },
+            selector = CoreMemorySelector { _, values -> values },
             tokenBudget = 100,
         )
 
-        assertEquals("- original", provider.buildMemory())
+        assertEquals("- original", provider.buildMemory("query"))
 
-        // 같은 Provider 인스턴스에서 기억이 수정된 상황을 재현한다.
         memories.value = listOf(
             CoreMemory(
                 id = 1,
@@ -71,12 +72,34 @@ class DefaultCoreMemoryProviderTest {
             )
         )
 
-        assertEquals("- revised", provider.buildMemory())
+        assertEquals("- revised", provider.buildMemory("query"))
 
-        // 삭제된 기억도 다음 호출에 반영되어야 한다.
         memories.value = emptyList()
 
-        assertEquals("", provider.buildMemory())
+        assertEquals("", provider.buildMemory("query"))
     }
 
+    @Test
+    fun passesQueryToSelectorAndRendersOnlySelectedMemories() = runBlocking {
+        val values = listOf(
+            CoreMemory(1, "나는 포항에 산다.", 100L, 100L),
+            CoreMemory(2, "내가 좋아하는 음료는 녹차다.", 200L, 200L),
+        )
+        var receivedQuery = ""
+
+        val provider = DefaultCoreMemoryProvider(
+            coreMemories = flowOf(values),
+            tokenCounter = { text -> text.length },
+            selector = CoreMemorySelector { query, memories ->
+                receivedQuery = query
+                memories.filter { it.id == 2L }
+            },
+            tokenBudget = 200,
+        )
+
+        val result = provider.buildMemory("내가 좋아하는 음료가 뭐였지?")
+
+        assertEquals("내가 좋아하는 음료가 뭐였지?", receivedQuery)
+        assertEquals("- 사용자가 좋아하는 음료는 녹차다.", result)
+    }
 }
