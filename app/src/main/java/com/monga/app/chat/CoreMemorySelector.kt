@@ -34,9 +34,6 @@ internal object DefaultCoreMemorySelector : CoreMemorySelector {
                 "커피",
                 "홍차",
                 "차 추천",
-                "차를",
-                "차가",
-                "차는",
                 "tea",
                 "drink",
                 "coffee",
@@ -50,9 +47,12 @@ internal object DefaultCoreMemorySelector : CoreMemorySelector {
                 "어디에 살",
                 "어디 살",
                 "살지",
-                "살고",
-                "산다",
-                "살아요",
+                "에 산다",
+                "에서 산다",
+                "에 살고",
+                "에서 살고",
+                "에 살아요",
+                "에서 살아요",
                 "where do i live",
             )
         ),
@@ -200,7 +200,31 @@ internal object DefaultCoreMemorySelector : CoreMemorySelector {
     private fun matchesTopic(
         text: String,
         topic: Topic,
-    ): Boolean = topic.markers.any(text::contains)
+    ): Boolean {
+        val tokens = topicTokens(text)
+
+        return topic.markers.any { marker ->
+            val normalizedMarker = normalize(marker)
+
+            if (' ' in normalizedMarker) {
+                text.contains(normalizedMarker)
+            } else {
+                val markerToken = stripTopicSuffix(normalizedMarker)
+                val isKoreanMarker = markerToken.any { char ->
+                    char in '가'..'힣'
+                }
+
+                tokens.any { token ->
+                    token == markerToken ||
+                        (
+                            isKoreanMarker &&
+                                markerToken.isNotEmpty() &&
+                                token.startsWith(markerToken)
+                            )
+                }
+            }
+        }
+    }
 
     private fun normalize(text: String): String =
         text
@@ -208,22 +232,46 @@ internal object DefaultCoreMemorySelector : CoreMemorySelector {
             .replace(Regex("[^가-힣a-z0-9]+"), " ")
             .trim()
 
+    private fun topicTokens(text: String): Set<String> =
+        text
+            .split(' ')
+            .asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .map(::stripTopicSuffix)
+            .toSet()
+
     private fun keywords(text: String): Set<String> =
         text
             .split(' ')
             .asSequence()
-            .map { token -> token.trim() }
-            .filter { token -> token.isNotEmpty() }
+            .map(String::trim)
+            .filter(String::isNotEmpty)
             .map(::stripSuffix)
             .filter { token -> token.length >= 2 }
             .filterNot(stopWords::contains)
             .toSet()
 
-    private fun stripSuffix(token: String): String {
+    private fun stripTopicSuffix(token: String): String =
+        stripSuffix(
+            token = token,
+            minimumStemLength = 1,
+        )
+
+    private fun stripSuffix(token: String): String =
+        stripSuffix(
+            token = token,
+            minimumStemLength = 2,
+        )
+
+    private fun stripSuffix(
+        token: String,
+        minimumStemLength: Int,
+    ): String {
         for (suffix in suffixes) {
             if (
                 token.endsWith(suffix) &&
-                token.length - suffix.length >= 2
+                token.length - suffix.length >= minimumStemLength
             ) {
                 return token.dropLast(suffix.length)
             }
