@@ -196,18 +196,17 @@ internal class DefaultEpisodicMemorySelector(
         candidates: List<ScoredMemory>,
         newestFirst: Boolean,
     ): List<ScoredMemory> {
-        val timeComparator = if (newestFirst) {
-            compareByDescending<ScoredMemory> { it.memory.occurredAt }
+        val comparator = if (newestFirst) {
+            compareByDescending<ScoredMemory> { it.score }
+                .thenByDescending { it.memory.occurredAt }
                 .thenByDescending { it.memory.id }
         } else {
-            compareBy<ScoredMemory> { it.memory.occurredAt }
+            compareByDescending<ScoredMemory> { it.score }
+                .thenBy { it.memory.occurredAt }
                 .thenBy { it.memory.id }
         }
 
-        return candidates.sortedWith(
-            compareByDescending<ScoredMemory> { it.score }
-                .then(timeComparator)
-        )
+        return candidates.sortedWith(comparator)
     }
 
     private fun sortByTimeOnly(
