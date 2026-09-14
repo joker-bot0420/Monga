@@ -81,27 +81,7 @@ class ChatCoordinator(
         )
         onUserMessageSaved(text)
 
-        val systemPrompt = buildString {
-            append(systemPromptProvider.buildPrompt().trimEnd())
-
-            if (coreMemoryRelevanceGate.shouldInclude(text)) {
-                val coreMemory = coreMemoryProvider.buildMemory().trim()
-
-                if (coreMemory.isNotEmpty()) {
-                    appendLine()
-                    appendLine()
-                    appendLine("[사용자 기억]")
-                    append(coreMemory)
-                }
-            }
-        }
-
-        val messages = listOf(
-            InferenceMessage(
-                role = InferenceRole.SYSTEM,
-                content = systemPrompt,
-            )
-        ) + chatStore.recentMessages(conversationId)
+        val recentMessages = chatStore.recentMessages(conversationId)
             .map { message ->
                 InferenceMessage(
                     role = when (message.role) {
@@ -112,6 +92,23 @@ class ChatCoordinator(
                     content = message.content,
                 )
             }
+
+        val contextualMessages =
+            if (coreMemoryRelevanceGate.shouldInclude(text)) {
+                attachCoreMemoryToLatestUserMessage(
+                    messages = recentMessages,
+                    coreMemory = coreMemoryProvider.buildMemory().trim(),
+                )
+            } else {
+                recentMessages
+            }
+
+        val messages = listOf(
+            InferenceMessage(
+                role = InferenceRole.SYSTEM,
+                content = systemPromptProvider.buildPrompt(),
+            )
+        ) + contextualMessages
 
         val response = StringBuilder()
         var result: ChatResult? = null
@@ -156,6 +153,39 @@ class ChatCoordinator(
         return result ?: ChatResult.Failed(
             IllegalStateException("추론이 종료 이벤트 없이 끝났습니다.")
         )
+    }
+
+    private fun attachCoreMemoryToLatestUserMessage(
+        messages: List<InferenceMessage>,
+        coreMemory: String,
+    ): List<InferenceMessage> {
+        if (coreMemory.isBlank()) {
+            return messages
+        }
+
+        val lastUserIndex = messages.indexOfLast {
+            it.role == InferenceRole.USER
+        }
+
+        if (lastUserIndex < 0) {
+            return messages
+        }
+
+        val userMessage = messages[lastUserIndex]
+        val contextualContent = buildString {
+            appendLine("[사용자 기억]")
+            appendLine("다음은 현재 질문에 답할 때 참고할 user 본인의 정보다.")
+            appendLine(coreMemory)
+            appendLine()
+            appendLine("[현재 질문]")
+            append(userMessage.content)
+        }
+
+        return messages.toMutableList().also { contextualized ->
+            contextualized[lastUserIndex] = userMessage.copy(
+                content = contextualContent,
+            )
+        }
     }
 
     fun cancel() {
