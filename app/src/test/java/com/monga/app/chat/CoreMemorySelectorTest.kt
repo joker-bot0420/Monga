@@ -91,6 +91,56 @@ class CoreMemorySelectorTest {
     }
 
     @Test
+    fun doesNotTreatCarPreferenceAsTeaPreference() {
+        val customMemories = listOf(
+            CoreMemory(
+                id = 20,
+                content = "나는 자동차를 좋아한다.",
+                createdAt = 200L,
+                updatedAt = 200L,
+            ),
+            CoreMemory(
+                id = 21,
+                content = "내가 좋아하는 음료는 녹차다.",
+                createdAt = 100L,
+                updatedAt = 100L,
+            ),
+        )
+
+        val result = DefaultCoreMemorySelector.select(
+            userMessage = "내 취향에 맞는 차 추천해줘.",
+            memories = customMemories,
+        )
+
+        assertEquals(listOf(21L), result.map { it.id })
+    }
+
+    @Test
+    fun doesNotTreatBuyingSomethingAsResidence() {
+        val customMemories = listOf(
+            CoreMemory(
+                id = 30,
+                content = "나는 녹차를 자주 산다.",
+                createdAt = 200L,
+                updatedAt = 200L,
+            ),
+            CoreMemory(
+                id = 31,
+                content = "나는 포항에 산다.",
+                createdAt = 100L,
+                updatedAt = 100L,
+            ),
+        )
+
+        val result = DefaultCoreMemorySelector.select(
+            userMessage = "나는 어디에 살지?",
+            memories = customMemories,
+        )
+
+        assertEquals(listOf(31L), result.map { it.id })
+    }
+
+    @Test
     fun fallsBackToStrongKeywordOverlapForUnlistedTopics() {
         val customMemories = listOf(
             CoreMemory(
