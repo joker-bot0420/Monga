@@ -480,8 +480,8 @@ try {
     if ($SelfTest -and ($DryRun -or $Publish -or $HistoricalRecovery -or -not [string]::IsNullOrWhiteSpace($ResultFile))) {
         throw '-SelfTest cannot be combined with reporter execution options.'
     }
+    . (Join-Path $PSScriptRoot 'Tollgate.HistoricalRecovery.ps1')
     if ($HistoricalRecovery -or $SelfTest) {
-        . (Join-Path $PSScriptRoot 'Tollgate.HistoricalRecovery.ps1')
         . (Join-Path (Split-Path $PSScriptRoot -Parent) 'tollgate-orchestrator/Orchestrator.Lock.ps1')
     }
     if ($SelfTest) { Invoke-ReporterSelfTest; exit 0 }
@@ -493,6 +493,9 @@ try {
     $completedDirectory = Join-Path $stateRoot 'completed'
     $failedDirectory = Join-Path $stateRoot 'failed'
     $reportedDirectory = Join-Path $stateRoot 'reported'
+    foreach ($path in @($stateRoot, $completedDirectory, $failedDirectory, $reportedDirectory)) {
+        Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $path
+    }
 
     if ([string]::IsNullOrWhiteSpace($ResultFile)) {
         $terminalFiles = @(
@@ -504,9 +507,11 @@ try {
         )
         $unreported = @()
         foreach ($file in $terminalFiles) {
+            Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $file.FullName
             $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
             $hash = Get-BytesSha256 -Bytes $bytes
             $reportedFile = Join-Path $reportedDirectory $file.Name
+            Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $reportedFile
             if (-not (Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $hash)) {
                 $unreported += $file
             }
@@ -522,6 +527,7 @@ try {
     if (-not (Test-DirectJsonChild -Path $resolvedResultFile -AllowedParents @($completedDirectory, $failedDirectory))) {
         throw 'Result file must be a canonical direct JSON child of completed/ or failed/.'
     }
+    Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $resolvedResultFile
     $terminalBytes = [System.IO.File]::ReadAllBytes($resolvedResultFile)
     $terminalHash = Get-BytesSha256 -Bytes $terminalBytes
 
@@ -551,9 +557,7 @@ try {
         $historicalTaskLock = Enter-HistoricalReporterTaskLock -LockPath $taskLockPath
     }
     $reportedFile = Join-Path $reportedDirectory "$commentId.json"
-    if ($HistoricalRecovery) {
-        Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $reportedFile
-    }
+    Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $reportedFile
     $alreadyReported = Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $terminalHash
     if ($alreadyReported -and -not $HistoricalRecovery) {
         Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $commentId"
@@ -574,14 +578,12 @@ try {
         exit 0
     }
     $runtimeDirectory = Join-Path (Join-Path $stateRoot 'runtime/reporter') "$commentId"
-    if ($HistoricalRecovery) { Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $runtimeDirectory }
-    [void](New-Item -ItemType Directory -Path $runtimeDirectory -Force)
+    Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $runtimeDirectory
+    Initialize-HistoricalTrustedDirectory -TrustedAnchor $repositoryRoot -Root $stateRoot -Directory $runtimeDirectory
     $reportFile = Join-Path $runtimeDirectory 'github-comment.txt'
     $metadataFile = Join-Path $runtimeDirectory 'report-metadata.json'
-    if ($HistoricalRecovery) {
-        foreach ($path in @($runtimeDirectory,$reportFile,$metadataFile)) {
-            Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $path
-        }
+    foreach ($path in @($runtimeDirectory,$reportFile,$metadataFile)) {
+        Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $path
     }
     [System.IO.File]::WriteAllBytes($reportFile, $renderedBytes)
     $metadata = [ordered]@{
@@ -641,16 +643,12 @@ try {
             $reported.settlement_key = $settlementKey
             $reported.rendered_comment_sha256 = $renderedHash
         }
-        if ($HistoricalRecovery) {
-            Initialize-HistoricalTrustedDirectory -TrustedAnchor $repositoryRoot -Root $stateRoot -Directory $reportedDirectory
-            Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $reportedFile
-            $reportedBytes = $utf8NoBom.GetBytes(($reported | ConvertTo-Json -Depth 20))
-            Write-HistoricalBytesAtomically -Bytes $reportedBytes -Destination $reportedFile `
-                -TrustedAnchor $repositoryRoot -Root $stateRoot -RefuseOverwrite
-            [void](Get-Content -LiteralPath $reportedFile -Raw -Encoding utf8 | ConvertFrom-Json)
-        } else {
-            Write-JsonAtomically -Value $reported -Destination $reportedFile
-        }
+        Initialize-HistoricalTrustedDirectory -TrustedAnchor $repositoryRoot -Root $stateRoot -Directory $reportedDirectory
+        Assert-HistoricalNoReparsePath -TrustedAnchor $repositoryRoot -Root $stateRoot -Path $reportedFile
+        $reportedBytes = $utf8NoBom.GetBytes(($reported | ConvertTo-Json -Depth 20))
+        Write-HistoricalBytesAtomically -Bytes $reportedBytes -Destination $reportedFile `
+            -TrustedAnchor $repositoryRoot -Root $stateRoot -RefuseOverwrite
+        [void](Get-Content -LiteralPath $reportedFile -Raw -Encoding utf8 | ConvertFrom-Json)
     }
 
     Write-Output '[TOLLGATE_REPORT_READY]'
