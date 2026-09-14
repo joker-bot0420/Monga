@@ -21,6 +21,7 @@ class ChatCoordinator(
     private val chatStore: ChatStore,
     private val inferenceEngine: InferenceEngine,
     private val systemPromptProvider: SystemPromptProvider,
+    private val coreMemoryProvider: CoreMemoryProvider = CoreMemoryProvider { _ -> "" },
 ) {
 
     private val sendMutex = Mutex()
@@ -78,12 +79,7 @@ class ChatCoordinator(
         )
         onUserMessageSaved(text)
 
-        val messages = listOf(
-            InferenceMessage(
-                role = InferenceRole.SYSTEM,
-                content = systemPromptProvider.buildPrompt(),
-            )
-        ) + chatStore.recentMessages(conversationId)
+        val recentMessages = chatStore.recentMessages(conversationId)
             .map { message ->
                 InferenceMessage(
                     role = when (message.role) {
@@ -94,6 +90,26 @@ class ChatCoordinator(
                     content = message.content,
                 )
             }
+
+        val coreMemory = coreMemoryProvider.buildMemory(text).trim()
+        val contextualMessages =
+            if (coreMemory.isNotEmpty()) {
+                attachCoreMemoryToLatestUserMessage(
+                    messages = dropTurnImmediatelyBeforeLatestUser(
+                        recentMessages
+                    ),
+                    coreMemory = coreMemory,
+                )
+            } else {
+                recentMessages
+            }
+
+        val messages = listOf(
+            InferenceMessage(
+                role = InferenceRole.SYSTEM,
+                content = systemPromptProvider.buildPrompt(),
+            )
+        ) + contextualMessages
 
         val response = StringBuilder()
         var result: ChatResult? = null
@@ -138,6 +154,65 @@ class ChatCoordinator(
         return result ?: ChatResult.Failed(
             IllegalStateException("추론이 종료 이벤트 없이 끝났습니다.")
         )
+    }
+
+    private fun dropTurnImmediatelyBeforeLatestUser(
+        messages: List<InferenceMessage>,
+    ): List<InferenceMessage> {
+        val lastUserIndex = messages.indexOfLast {
+            it.role == InferenceRole.USER
+        }
+
+        val assistantIndex = lastUserIndex - 1
+        val priorUserIndex = assistantIndex - 1
+
+        if (
+            lastUserIndex < 0 ||
+            assistantIndex < 0 ||
+            priorUserIndex < 0 ||
+            messages[assistantIndex].role != InferenceRole.ASSISTANT ||
+            messages[priorUserIndex].role != InferenceRole.USER
+        ) {
+            return messages
+        }
+
+        return messages.toMutableList().also { focused ->
+            focused.removeAt(assistantIndex)
+            focused.removeAt(priorUserIndex)
+        }
+    }
+
+    private fun attachCoreMemoryToLatestUserMessage(
+        messages: List<InferenceMessage>,
+        coreMemory: String,
+    ): List<InferenceMessage> {
+        if (coreMemory.isBlank()) {
+            return messages
+        }
+
+        val lastUserIndex = messages.indexOfLast {
+            it.role == InferenceRole.USER
+        }
+
+        if (lastUserIndex < 0) {
+            return messages
+        }
+
+        val userMessage = messages[lastUserIndex]
+        val contextualContent = buildString {
+            appendLine("[사용자 기억]")
+            appendLine("다음은 현재 질문에 답할 때 참고할 user 본인의 정보다.")
+            appendLine(coreMemory)
+            appendLine()
+            appendLine("[현재 질문]")
+            append(userMessage.content)
+        }
+
+        return messages.toMutableList().also { contextualized ->
+            contextualized[lastUserIndex] = userMessage.copy(
+                content = contextualContent,
+            )
+        }
     }
 
     fun cancel() {
