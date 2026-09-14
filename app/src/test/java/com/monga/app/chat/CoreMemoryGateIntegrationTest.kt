@@ -52,49 +52,86 @@ class CoreMemoryGateIntegrationTest {
         }
         assertFalse(system.content.contains("[사용자 기억]"))
         assertFalse(system.content.contains("녹차"))
+
+        val latestUser = engine.receivedMessages.last {
+            it.role == InferenceRole.USER
+        }
+        assertEquals("오늘 기분 어때?", latestUser.content)
     }
 
     @Test
-    fun recallRequestBuildsAndInjectsCoreMemory() = runBlocking {
-        val store = RecordingChatStore()
-        val engine = CapturingInferenceEngine()
-        var memoryBuildCount = 0
+    fun recallRequestBuildsMemoryAndAttachesItOnlyToLatestUserInferenceCopy() =
+        runBlocking {
+            val store = RecordingChatStore().apply {
+                seed(MessageRole.USER, "오늘 기분 어때?")
+                seed(MessageRole.ASSISTANT, "오늘 기분이 좋구요. 😊")
+            }
+            val engine = CapturingInferenceEngine()
+            var memoryBuildCount = 0
 
-        val coordinator = ChatCoordinator(
-            chatStore = store,
-            inferenceEngine = engine,
-            systemPromptProvider = SystemPromptProvider {
-                "너는 몽아라는 AI다."
-            },
-            coreMemoryProvider = CoreMemoryProvider {
-                memoryBuildCount++
-                "- 사용자는 녹차를 좋아한다."
-            },
-            coreMemoryRelevanceGate = DefaultCoreMemoryRelevanceGate,
-        )
+            val coordinator = ChatCoordinator(
+                chatStore = store,
+                inferenceEngine = engine,
+                systemPromptProvider = SystemPromptProvider {
+                    "너는 몽아라는 AI다."
+                },
+                coreMemoryProvider = CoreMemoryProvider {
+                    memoryBuildCount++
+                    "- 사용자는 녹차를 좋아한다."
+                },
+                coreMemoryRelevanceGate = DefaultCoreMemoryRelevanceGate,
+            )
 
-        val result = coordinator.send(
-            conversationId = 1L,
-            content = "내가 좋아하는 음료가 뭐였지?",
-        )
+            val result = coordinator.send(
+                conversationId = 1L,
+                content = "내가 좋아하는 음료가 뭐였지?",
+            )
 
-        assertEquals(ChatResult.Completed, result)
-        assertEquals(1, memoryBuildCount)
+            assertEquals(ChatResult.Completed, result)
+            assertEquals(1, memoryBuildCount)
 
-        val system = engine.receivedMessages.first {
-            it.role == InferenceRole.SYSTEM
+            val system = engine.receivedMessages.first {
+                it.role == InferenceRole.SYSTEM
+            }
+            assertFalse(system.content.contains("[사용자 기억]"))
+            assertFalse(system.content.contains("녹차"))
+
+            val userMessages = engine.receivedMessages.filter {
+                it.role == InferenceRole.USER
+            }
+            assertEquals("오늘 기분 어때?", userMessages.first().content)
+
+            val latestUser = userMessages.last().content
+            assertTrue(latestUser.contains("[사용자 기억]"))
+            assertTrue(latestUser.contains("- 사용자는 녹차를 좋아한다."))
+            assertTrue(latestUser.contains("[현재 질문]"))
+            assertTrue(latestUser.endsWith("내가 좋아하는 음료가 뭐였지?"))
+
+            val persistedCurrentUser = store.savedMessages.last {
+                it.role == MessageRole.USER
+            }
+            assertEquals(
+                "내가 좋아하는 음료가 뭐였지?",
+                persistedCurrentUser.content,
+            )
+            assertFalse(persistedCurrentUser.content.contains("[사용자 기억]"))
         }
-        assertTrue(system.content.contains("[사용자 기억]"))
-        assertTrue(system.content.contains("- 사용자는 녹차를 좋아한다."))
-
-        val savedUser = store.savedMessages.first {
-            it.role == MessageRole.USER
-        }
-        assertEquals("내가 좋아하는 음료가 뭐였지?", savedUser.content)
-    }
 
     private class RecordingChatStore : ChatStore {
         val savedMessages = mutableListOf<Message>()
+
+        fun seed(
+            role: MessageRole,
+            content: String,
+        ) {
+            savedMessages += Message(
+                id = savedMessages.size.toLong() + 1,
+                conversationId = 1L,
+                role = role,
+                content = content,
+                createdAt = savedMessages.size.toLong(),
+            )
+        }
 
         override suspend fun saveMessage(
             conversationId: Long,
