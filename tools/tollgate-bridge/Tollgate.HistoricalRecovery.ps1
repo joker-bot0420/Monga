@@ -32,7 +32,7 @@ function Get-HistoricalRecoveryConstants {
 function ConvertTo-HistoricalRepositoryIdentity {
     param([Parameter(Mandatory = $true)][string]$RemoteUrl)
     $value = $RemoteUrl.Trim()
-    $match = [regex]::Match($value, '^(?:https?://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?/?$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $match = [regex]::Match($value, '^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?/?$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if (-not $match.Success) { throw 'Git origin is not a supported GitHub repository URL.' }
     return "$($match.Groups['owner'].Value)/$($match.Groups['repo'].Value)"
 }
@@ -442,11 +442,13 @@ function Assert-HistoricalRecoveryEvidenceArtifacts {
     param(
         [Parameter(Mandatory = $true)][object]$Record,
         [Parameter(Mandatory = $true)][string]$TerminalPath,
-        [Parameter(Mandatory = $true)][string]$StateRoot
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$StateOwnerRepositoryRoot,
+        [Parameter(Mandatory = $true)][object]$Manifest
     )
-    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     Assert-HistoricalRecoveryEvidenceArtifactsAgainstManifest -Record $Record -TerminalPath $TerminalPath `
-        -StateRoot $StateRoot -TrustedAnchor $repositoryRoot -Manifest (Get-ProductionHistoricalEvidenceManifest)
+        -StateRoot $StateRoot -TrustedAnchor $StateOwnerRepositoryRoot `
+        -Manifest $Manifest
 }
 
 function Get-HistoricalSettlementKey {

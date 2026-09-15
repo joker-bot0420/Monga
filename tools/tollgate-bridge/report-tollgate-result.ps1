@@ -559,7 +559,9 @@ try {
     $hasRecovery = $null -ne $record.PSObject.Properties['recovery']
     if ($HistoricalRecovery) {
         if (-not $hasRecovery) { throw 'Historical recovery mode requires a recovery terminal record.' }
-        Assert-HistoricalRecoveryEvidenceArtifacts -Record $record -TerminalPath $resolvedResultFile -StateRoot $stateRoot
+        Assert-HistoricalRecoveryEvidenceArtifacts -Record $record -TerminalPath $resolvedResultFile `
+            -StateRoot $stateRoot -StateOwnerRepositoryRoot $stateTrustedAnchor `
+            -Manifest (Get-ProductionHistoricalEvidenceManifest)
     } elseif ($hasRecovery) {
         throw 'Historical recovery records require explicit -HistoricalRecovery mode.'
     }
