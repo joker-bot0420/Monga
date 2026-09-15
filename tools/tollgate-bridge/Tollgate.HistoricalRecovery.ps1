@@ -29,6 +29,74 @@ function Get-HistoricalRecoveryConstants {
     return $script:HistoricalRecoveryConstants
 }
 
+function ConvertTo-HistoricalRepositoryIdentity {
+    param([Parameter(Mandatory = $true)][string]$RemoteUrl)
+    $value = $RemoteUrl.Trim()
+    $match = [regex]::Match($value, '^(?:https?://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?/?$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $match.Success) { throw 'Git origin is not a supported GitHub repository URL.' }
+    return "$($match.Groups['owner'].Value)/$($match.Groups['repo'].Value)"
+}
+
+function Get-HistoricalGitRepositoryRoot {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $output = & git -C $Path rev-parse --show-toplevel 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Unable to resolve Git repository root for: $Path" }
+    return [IO.Path]::GetFullPath(($output | Out-String).Trim()).TrimEnd('\')
+}
+
+function Assert-HistoricalRepositoryIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$ExpectedIdentity
+    )
+    $origin = & git -C $RepositoryRoot remote get-url origin 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Unable to read Git origin for: $RepositoryRoot" }
+    $identity = ConvertTo-HistoricalRepositoryIdentity (($origin | Out-String).Trim())
+    if (-not $identity.Equals($ExpectedIdentity, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Git repository identity is invalid: $identity"
+    }
+    return $identity
+}
+
+function Get-HistoricalProductionStateContext {
+    param(
+        [Parameter(Mandatory = $true)][string]$CandidateRepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$ProductionStateRoot,
+        [Parameter(Mandatory = $true)][string]$ExpectedRepositoryIdentity
+    )
+    if (-not [IO.Path]::IsPathRooted($ProductionStateRoot)) {
+        throw '-ProductionStateRoot must be an absolute path.'
+    }
+    $candidateRoot = [IO.Path]::GetFullPath($CandidateRepositoryRoot).TrimEnd('\')
+    $stateRoot = [IO.Path]::GetFullPath($ProductionStateRoot).TrimEnd('\')
+    if ([IO.Path]::GetFileName($stateRoot) -cne '.tollgate-local') {
+        throw '-ProductionStateRoot basename must be exactly .tollgate-local.'
+    }
+    if (-not (Test-Path -LiteralPath $stateRoot -PathType Container)) {
+        throw '-ProductionStateRoot must be an existing directory.'
+    }
+    $stateOwnerRoot = [IO.Path]::GetDirectoryName($stateRoot).TrimEnd('\')
+    $candidateGitRoot = Get-HistoricalGitRepositoryRoot $candidateRoot
+    if (-not $candidateGitRoot.Equals($candidateRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Candidate script root is not the candidate Git top-level.'
+    }
+    $ownerGitRoot = Get-HistoricalGitRepositoryRoot $stateOwnerRoot
+    if (-not $ownerGitRoot.Equals($stateOwnerRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw '-ProductionStateRoot parent must be the state-owner Git top-level.'
+    }
+    Assert-HistoricalNoReparsePath -TrustedAnchor $candidateRoot -Root $candidateRoot -Path $candidateRoot
+    Assert-HistoricalNoReparsePath -TrustedAnchor $stateOwnerRoot -Root $stateRoot -Path $stateRoot
+    $candidateIdentity = Assert-HistoricalRepositoryIdentity $candidateRoot $ExpectedRepositoryIdentity
+    $ownerIdentity = Assert-HistoricalRepositoryIdentity $stateOwnerRoot $ExpectedRepositoryIdentity
+    return [pscustomobject]@{
+        CandidateRepositoryRoot = $candidateRoot
+        CandidateRepositoryIdentity = $candidateIdentity
+        ProductionStateRoot = $stateRoot
+        StateOwnerRepositoryRoot = $stateOwnerRoot
+        StateOwnerRepositoryIdentity = $ownerIdentity
+    }
+}
+
 function Get-ProductionHistoricalEvidenceManifest {
     $c = Get-HistoricalRecoveryConstants
     return [pscustomobject]@{

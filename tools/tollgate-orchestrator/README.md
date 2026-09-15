@@ -295,6 +295,35 @@ not post again. This narrows the duplicate window but cannot provide an absolute
 transaction across GitHub and the local filesystem. A verified comment can be
 adopted after a later retry if local `reported/` writing failed.
 
+Historical production commands do not infer state from the checkout containing
+the candidate scripts. Settlement and historical reporting require an explicit
+absolute `-ProductionStateRoot` whose basename is exactly `.tollgate-local`.
+Its parent must be a non-reparse Git top-level, and both the candidate checkout
+and state-owner checkout must normalize their local `origin` URL to
+`joker-bot0420/Monga`. The checkout roots may differ. Historical lifecycle
+paths are anchored below the state-owner checkout; normal reporting keeps its
+repository-local `.tollgate-local` behavior. Synthetic state and manifest
+parameters remain separate and cannot be combined with the production root.
+
+Production command shape (examples only; separate approval is still required):
+
+```powershell
+.\tools\tollgate-bridge\settle-tollgate-history.ps1 `
+    -ProductionStateRoot '<state-owner-repository>\.tollgate-local' `
+    -Apply
+
+.\tools\tollgate-bridge\report-tollgate-result.ps1 `
+    -HistoricalRecovery `
+    -ProductionStateRoot '<state-owner-repository>\.tollgate-local' `
+    -Publish `
+    -ResultFile '<state-owner-repository>\.tollgate-local\failed\5563219043.json'
+```
+
+Omitting the production root fails before lifecycle or GitHub writes; there is
+no candidate-local fallback. The cross-checkout contract is covered by
+`tools/tollgate-bridge/tests/Test-CrossWorktreeProductionState.ps1`, using only
+isolated local repositories and never production historical state.
+
 Do not apply or publish this recovery merely because the files exist. Actual
 state mutation and GitHub publication require separate explicit user approval.
 The isolated regression test is

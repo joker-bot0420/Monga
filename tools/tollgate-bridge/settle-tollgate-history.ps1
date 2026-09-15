@@ -1,6 +1,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Production')]
 param(
     [Parameter(Mandatory = $true)][switch]$Apply,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Production')][string]$ProductionStateRoot,
     [Parameter(Mandatory = $true, ParameterSetName = 'Synthetic')][switch]$Synthetic,
     [Parameter(Mandatory = $true, ParameterSetName = 'Synthetic')][string]$StateRoot,
     [Parameter(Mandatory = $true, ParameterSetName = 'Synthetic')][string]$EvidenceManifestPath,
@@ -43,9 +44,9 @@ function Assert-ExactArtifact([string]$Path,[byte[]]$ExpectedBytes,[scriptblock]
 $orchestratorLock=$null;$taskLock=$null
 try{
     if(-not$Apply){throw '-Apply is required for the explicit one-shot recovery operation.'}
-    $repositoryRoot=[IO.Path]::GetFullPath(((&git -C $PSScriptRoot rev-parse --show-toplevel)|Out-String).Trim());if($LASTEXITCODE-ne 0){throw 'Unable to locate repository root.'}
-    if($Synthetic){$trustedAnchor=[IO.Path]::GetFullPath((Join-Path $repositoryRoot 'tools/tollgate-bridge/tests/state')).TrimEnd('\');$state=[IO.Path]::GetFullPath($StateRoot);Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $state -Path $state;$manifestPath=[IO.Path]::GetFullPath($EvidenceManifestPath);Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $state -Path $manifestPath;$manifest=(Read-StrictJsonBytes $manifestPath).Value}
-    else{$trustedAnchor=$repositoryRoot;$state=[IO.Path]::GetFullPath((Join-Path $repositoryRoot '.tollgate-local'));if($FailurePoint-cne'None'){throw 'Failure injection is synthetic-only.'};&git -C $repositoryRoot cat-file -e "$($constants.BaseCommit)^{commit}" 2>$null;if($LASTEXITCODE-ne 0){throw 'Historical base commit is unavailable.'};$parent=((&git -C $repositoryRoot show -s --format=%P $constants.BaseCommit)|Out-String).Trim();if($parent-cne$constants.BaseParent){throw 'Historical base commit parent does not match the recovery contract.'};$manifest=Get-ProductionManifest}
+    $candidateRepositoryRoot=Get-HistoricalGitRepositoryRoot $PSScriptRoot
+    if($Synthetic){$trustedAnchor=[IO.Path]::GetFullPath((Join-Path $candidateRepositoryRoot 'tools/tollgate-bridge/tests/state')).TrimEnd('\');$state=[IO.Path]::GetFullPath($StateRoot);Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $state -Path $state;$manifestPath=[IO.Path]::GetFullPath($EvidenceManifestPath);Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $state -Path $manifestPath;$manifest=(Read-StrictJsonBytes $manifestPath).Value}
+    else{$context=Get-HistoricalProductionStateContext -CandidateRepositoryRoot $candidateRepositoryRoot -ProductionStateRoot $ProductionStateRoot -ExpectedRepositoryIdentity $constants.Repository;$stateOwnerRepositoryRoot=$context.StateOwnerRepositoryRoot;$trustedAnchor=$stateOwnerRepositoryRoot;$state=$context.ProductionStateRoot;if($FailurePoint-cne'None'){throw 'Failure injection is synthetic-only.'};&git -C $candidateRepositoryRoot cat-file -e "$($constants.BaseCommit)^{commit}" 2>$null;if($LASTEXITCODE-ne 0){throw 'Historical base commit is unavailable.'};$parent=((&git -C $candidateRepositoryRoot show -s --format=%P $constants.BaseCommit)|Out-String).Trim();if($parent-cne$constants.BaseParent){throw 'Historical base commit parent does not match the recovery contract.'};$manifest=Get-ProductionManifest}
     Assert-Manifest $manifest;Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $state -Path $state
     $orchestratorLockPath=Join-Path $state 'orchestrator/orchestrator.lock';$taskLockPath=Join-Path $state "orchestrator/task-$($constants.ApprovalCommentId).lock";foreach($lockPath in @($orchestratorLockPath,$taskLockPath)){Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $state -Path $lockPath;Initialize-HistoricalTrustedDirectory -TrustedAnchor $trustedAnchor -Root $state -Directory (Split-Path -Parent $lockPath);Assert-HistoricalNoReparsePath -TrustedAnchor $trustedAnchor -Root $state -Path $lockPath}
     $orchestratorLock=Enter-TollgateOrchestratorLock $orchestratorLockPath;$taskLock=Enter-TollgateOrchestratorLock $taskLockPath
