@@ -22,6 +22,7 @@ class ChatCoordinator(
     private val inferenceEngine: InferenceEngine,
     private val systemPromptProvider: SystemPromptProvider,
     private val coreMemoryProvider: CoreMemoryProvider = CoreMemoryProvider { _ -> "" },
+    private val episodicMemoryProvider: EpisodicMemoryProvider = EpisodicMemoryProvider { _ -> "" },
 ) {
 
     private val sendMutex = Mutex()
@@ -92,10 +93,12 @@ class ChatCoordinator(
             }
 
         val coreMemory = coreMemoryProvider.buildMemory(text).trim()
+        val episodicMemory = episodicMemoryProvider.buildMemory(text).trim()
         val messages = ContextComposer.compose(
             systemPrompt = systemPromptProvider.buildPrompt(),
             recentMessages = recentMessages,
             coreMemory = coreMemory,
+            episodicMemory = episodicMemory,
         )
 
         val response = StringBuilder()

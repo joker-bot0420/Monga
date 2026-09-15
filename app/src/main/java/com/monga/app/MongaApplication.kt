@@ -3,6 +3,7 @@ package com.monga.app
 import android.app.Application
 import com.monga.app.chat.ChatCoordinator
 import com.monga.app.chat.DefaultCoreMemoryProvider
+import com.monga.app.chat.DefaultEpisodicMemoryProvider
 import com.monga.app.chat.DefaultPersonaProvider
 import com.monga.app.chat.DefaultSystemPromptProvider
 import com.monga.app.data.MongaRepository
@@ -44,16 +45,22 @@ class MongaApplication : Application() {
     }
 
     val chatCoordinator by lazy {
+        val memoryTokenCounter: (String) -> Int = { text ->
+            LlamaNativeBridge.nativeCountChatTokens(
+                roles = arrayOf(
+                    InferenceRole.USER.wireValue,
+                ),
+                contents = arrayOf(text),
+            )
+        }
+
         val coreMemoryProvider = DefaultCoreMemoryProvider(
             coreMemories = repository.coreMemories,
-            tokenCounter = { text ->
-                LlamaNativeBridge.nativeCountChatTokens(
-                    roles = arrayOf(
-                        InferenceRole.USER.wireValue,
-                    ),
-                    contents = arrayOf(text),
-                )
-            },
+            tokenCounter = memoryTokenCounter,
+        )
+        val episodicMemoryProvider = DefaultEpisodicMemoryProvider(
+            episodicMemories = repository.episodicMemories,
+            tokenCounter = memoryTokenCounter,
         )
 
         ChatCoordinator(
@@ -63,6 +70,7 @@ class MongaApplication : Application() {
                 personaProvider = DefaultPersonaProvider(),
             ),
             coreMemoryProvider = coreMemoryProvider,
+            episodicMemoryProvider = episodicMemoryProvider,
         )
     }
 }

@@ -9,18 +9,20 @@ internal object ContextComposer {
         systemPrompt: String,
         recentMessages: List<InferenceMessage>,
         coreMemory: String,
+        episodicMemory: String = "",
     ): List<InferenceMessage> {
-        val contextualMessages =
+        val focusedMessages =
             if (coreMemory.isNotEmpty()) {
-                attachCoreMemoryToLatestUserMessage(
-                    messages = dropTurnImmediatelyBeforeLatestUser(
-                        recentMessages
-                    ),
-                    coreMemory = coreMemory,
-                )
+                dropTurnImmediatelyBeforeLatestUser(recentMessages)
             } else {
                 recentMessages
             }
+
+        val contextualMessages = attachMemoryToLatestUserMessage(
+            messages = focusedMessages,
+            coreMemory = coreMemory,
+            episodicMemory = episodicMemory,
+        )
 
         return listOf(
             InferenceMessage(
@@ -56,11 +58,12 @@ internal object ContextComposer {
         }
     }
 
-    private fun attachCoreMemoryToLatestUserMessage(
+    private fun attachMemoryToLatestUserMessage(
         messages: List<InferenceMessage>,
         coreMemory: String,
+        episodicMemory: String,
     ): List<InferenceMessage> {
-        if (coreMemory.isBlank()) {
+        if (coreMemory.isBlank() && episodicMemory.isBlank()) {
             return messages
         }
 
@@ -74,9 +77,21 @@ internal object ContextComposer {
 
         val userMessage = messages[lastUserIndex]
         val contextualContent = buildString {
-            appendLine("[사용자 기억]")
-            appendLine("다음은 현재 질문에 답할 때 참고할 user 본인의 정보다.")
-            appendLine(coreMemory)
+            if (coreMemory.isNotBlank()) {
+                appendLine("[사용자 기억]")
+                appendLine("다음은 현재 질문에 답할 때 참고할 user 본인의 정보다.")
+                appendLine(coreMemory)
+            }
+
+            if (episodicMemory.isNotBlank()) {
+                if (isNotEmpty()) {
+                    appendLine()
+                }
+                appendLine("[과거 사건 기억]")
+                appendLine("다음은 user의 과거 사건 기록이다.")
+                appendLine(episodicMemory)
+            }
+
             appendLine()
             appendLine("[현재 질문]")
             append(userMessage.content)
