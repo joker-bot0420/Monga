@@ -88,7 +88,10 @@ internal object ContextComposer {
                     appendLine()
                 }
                 appendLine("[과거 사건 기억]")
-                appendLine("다음은 user의 과거 사건 기록이다.")
+                appendLine("다음은 현재 질문과 관련되어 선택된 user의 과거 사건 기록이다.")
+                appendLine("기록에 있는 사실을 우선하여 답하라.")
+                appendLine("기록과 모순되는 내용을 만들지 마라.")
+                appendLine("기록에 없는 감정, 상태, 세부사항은 추측하지 마라.")
                 appendLine(episodicMemory)
             }
 
