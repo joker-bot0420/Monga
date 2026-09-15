@@ -88,11 +88,14 @@ internal object ContextComposer {
                     appendLine()
                 }
                 appendLine("[과거 사건 기억]")
-                appendLine("다음은 현재 질문과 관련되어 선택된 user의 과거 사건 기록이다.")
-                appendLine("기록에 있는 사실을 우선하여 답하라.")
-                appendLine("기록과 모순되는 내용을 만들지 마라.")
-                appendLine("기록에 없는 감정, 상태, 세부사항은 추측하지 마라.")
                 appendLine(episodicMemory)
+                appendLine()
+                appendLine("[기억 사용 규칙]")
+                appendLine("위 기록은 현재 질문과 관련되어 선택된 사실 기록이다.")
+                appendLine("기록에 적힌 사건이 있으면 그 사건이 없었다고 부정하지 마라.")
+                appendLine("기록으로 확인되는 사실만 답하라.")
+                appendLine("질문에 필요한 정보가 기록에 없으면 '기록에는 그 내용이 없다'고 말하라.")
+                appendLine("기록에 없는 내용을 덧붙이지 마라.")
             }
 
             appendLine()
