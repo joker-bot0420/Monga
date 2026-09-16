@@ -556,17 +556,16 @@ try {
 
     $record = ConvertFrom-Json -InputObject $terminalText
     Assert-TerminalRecord -Record $record -RecordPath $resolvedResultFile
+    $commentId = [long]$record.comment_id
+    $reportedFile = Join-Path $reportedDirectory "$commentId.json"
+    Assert-HistoricalNoReparsePath -TrustedAnchor $stateTrustedAnchor -Root $stateRoot -Path $reportedFile
     $hasRecovery = $null -ne $record.PSObject.Properties['recovery']
+
     if ($HistoricalRecovery) {
         if (-not $hasRecovery) { throw 'Historical recovery mode requires a recovery terminal record.' }
         Assert-HistoricalRecoveryEvidenceArtifacts -Record $record -TerminalPath $resolvedResultFile `
             -StateRoot $stateRoot -StateOwnerRepositoryRoot $stateTrustedAnchor `
             -Manifest (Get-ProductionHistoricalEvidenceManifest)
-    } elseif ($hasRecovery) {
-        throw 'Historical recovery records require explicit -HistoricalRecovery mode.'
-    }
-    $commentId = [long]$record.comment_id
-    if ($HistoricalRecovery) {
         $taskLockPath = Join-Path $stateRoot "orchestrator/task-$commentId.lock"
         Assert-HistoricalNoReparsePath -TrustedAnchor $stateTrustedAnchor -Root $stateRoot -Path $taskLockPath
         [void][IO.Directory]::CreateDirectory((Split-Path $taskLockPath -Parent))
@@ -575,13 +574,20 @@ try {
         # reported-state commit with settlement and direct executor users of
         # the same approval-specific lock identity.
         $historicalTaskLock = Enter-HistoricalReporterTaskLock -LockPath $taskLockPath
-    }
-    $reportedFile = Join-Path $reportedDirectory "$commentId.json"
-    Assert-HistoricalNoReparsePath -TrustedAnchor $stateTrustedAnchor -Root $stateRoot -Path $reportedFile
-    $alreadyReported = Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $terminalHash
-    if ($alreadyReported -and -not $HistoricalRecovery) {
-        Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $commentId"
-        exit 0
+        $alreadyReported = Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $terminalHash
+    } else {
+        $alreadyReported = Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $terminalHash
+        if ($hasRecovery) {
+            if ($alreadyReported) {
+                Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $commentId"
+                exit 0
+            }
+            throw 'Historical recovery records require explicit -HistoricalRecovery mode.'
+        }
+        if ($alreadyReported) {
+            Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $commentId"
+            exit 0
+        }
     }
 
     $settlementKey = if ($HistoricalRecovery) { Get-HistoricalSettlementKey -TerminalSha256 $terminalHash } else { '' }
