@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "settlement_kind", "termination_reason",
+    "automatic_iterations", "last_automatic_result", "requires_user",
+    "manual_work_is_out_of_band", "tollgate_id", "approval_comment_id",
+    "checkpoint_comment_id", "pending_sha256", "iteration_results",
+    "approval_body_sha256", "checkpoint_body_sha256",
+    "base_commit", "base_parent", "acceptance_satisfied", "decision_required"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "settlement_kind": { "const": "historical_recovery" },
+    "termination_reason": { "const": "MAX_ITERATIONS_REACHED" },
+    "automatic_iterations": { "const": 5 },
+    "last_automatic_result": { "const": "CONTINUE" },
+    "requires_user": { "const": true },
+    "manual_work_is_out_of_band": { "const": true },
+    "tollgate_id": { "const": "TG-AUTO-02-EXT" },
+    "approval_comment_id": { "const": 5563219043 },
+    "checkpoint_comment_id": { "const": 5566069227 },
+    "pending_sha256": { "const": "c1a38025d51c0df53e41fb69dfbea7c259812053d7e03af06f496f267b827fd5" },
+    "iteration_results": {
+      "type": "array", "minItems": 5, "maxItems": 5,
+      "prefixItems": [
+        { "type": "object", "additionalProperties": false, "required": ["iteration", "status", "sha256"], "properties": { "iteration": { "const": 1 }, "status": { "const": "CONTINUE" }, "sha256": { "const": "6611bd33a12d587170204a4d16fc0341672cef3ca2b919d36a17ef73ca381791" } } },
+        { "type": "object", "additionalProperties": false, "required": ["iteration", "status", "sha256"], "properties": { "iteration": { "const": 2 }, "status": { "const": "CONTINUE" }, "sha256": { "const": "f85c288a09d93f1e21dff74937950a75c40d725b2ca56478429b71c335aed1eb" } } },
+        { "type": "object", "additionalProperties": false, "required": ["iteration", "status", "sha256"], "properties": { "iteration": { "const": 3 }, "status": { "const": "CONTINUE" }, "sha256": { "const": "650c804eac80a83ae16be13f943c70fec7e69ef4f374dbed42e9a6247c733d1a" } } },
+        { "type": "object", "additionalProperties": false, "required": ["iteration", "status", "sha256"], "properties": { "iteration": { "const": 4 }, "status": { "const": "CONTINUE" }, "sha256": { "const": "0e68ae8aa3f2e9c2fe145e678026f6c6d6d805772d45f43f85e5de5b6ae0d0e4" } } },
+        { "type": "object", "additionalProperties": false, "required": ["iteration", "status", "sha256"], "properties": { "iteration": { "const": 5 }, "status": { "const": "CONTINUE" }, "sha256": { "const": "0a5302bccc6db79220056fd25bbb4fe340b70bdc25cf3fe9a1fe861f32ed7d57" } } }
+      ],
+      "items": false
+    },
+    "approval_body_sha256": { "const": "9cf38618469c281ab7b9238f054f3b8ace33d829537f5473e983acdd75ec9ad7" },
+    "checkpoint_body_sha256": { "const": "be8f67d852e1d7c314fe41e6b6120176873feac51dfbdd09da9cdbc01e413d18" },
+    "base_commit": { "const": "84d05941c86a34033749659207d435f6a3349b0f" },
+    "base_parent": { "const": "41fc85474a34a853b2901cf5e77d657fac0976ee" },
+    "acceptance_satisfied": { "const": false },
+    "decision_required": { "type": "string", "minLength": 1 }
+  }
+}
