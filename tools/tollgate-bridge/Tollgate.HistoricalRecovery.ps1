@@ -190,6 +190,52 @@ function Assert-HistoricalRecoveryMetadataAgainstManifest {
     }
 }
 
+function ConvertTo-HistoricalUtcInstant {
+    param([Parameter(Mandatory = $true)][object]$Value)
+
+    if ($Value -is [DateTimeOffset]) {
+        return ([DateTimeOffset]$Value).ToUniversalTime()
+    }
+    if ($Value -is [DateTime]) {
+        $dateTime = [DateTime]$Value
+        if ($dateTime.Kind -eq [DateTimeKind]::Unspecified) {
+            throw 'Historical timestamp DateTime kind is ambiguous.'
+        }
+        return ([DateTimeOffset]$dateTime).ToUniversalTime()
+    }
+    if ($Value -isnot [string]) {
+        throw 'Historical timestamp must be an ISO/RFC3339 string or an unambiguous date-time value.'
+    }
+
+    $text = [string]$Value
+    if ($text -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|[+-]\d{2}:\d{2})$') {
+        throw 'Historical timestamp must use an explicit ISO/RFC3339 offset.'
+    }
+    $parsed = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse(
+            $text,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind,
+            [ref]$parsed)) {
+        throw 'Historical timestamp is invalid.'
+    }
+    return $parsed.ToUniversalTime()
+}
+
+function Test-HistoricalTimestampInstantEqual {
+    param(
+        [Parameter(Mandatory = $true)][object]$Actual,
+        [Parameter(Mandatory = $true)][object]$Expected
+    )
+    try {
+        $actualInstant = ConvertTo-HistoricalUtcInstant $Actual
+        $expectedInstant = ConvertTo-HistoricalUtcInstant $Expected
+        return $actualInstant.UtcDateTime.Ticks -eq $expectedInstant.UtcDateTime.Ticks
+    } catch {
+        return $false
+    }
+}
+
 function Assert-HistoricalNoReparsePath {
     param(
         [Parameter(Mandatory = $true)][string]$TrustedAnchor,
@@ -296,13 +342,16 @@ function Assert-HistoricalRecoveryTerminalRecordAgainstManifest {
     $approval = Get-RecoveryRequiredProperty $Record 'original_approval'
     $approvalBody = [string](Get-RecoveryRequiredProperty $approval 'body')
     $approvalEvidence = Get-RecoveryRequiredProperty $Manifest 'approval'
+    $approvalCreatedAtMatches = Test-HistoricalTimestampInstantEqual `
+        (Get-RecoveryRequiredProperty $approval 'created_at') `
+        (Get-RecoveryRequiredProperty $approvalEvidence 'created_at')
     if ([string](Get-RecoveryRequiredProperty $approval 'repository') -cne $c.Repository -or
         [int](Get-RecoveryRequiredProperty $approval 'pr_number') -ne $c.PrNumber -or
         [long](Get-RecoveryRequiredProperty $approval 'comment_id') -ne $c.ApprovalCommentId -or
         [string](Get-RecoveryRequiredProperty $approval 'status') -cne 'pending' -or
         [string](Get-RecoveryRequiredProperty $approval 'author') -cne $c.ApprovalCommentAuthor -or
         [string](Get-RecoveryRequiredProperty $approval 'marker') -cne '[TOLLGATE_APPROVED]' -or
-        [string](Get-RecoveryRequiredProperty $approval 'created_at') -cne $c.ApprovalCommentCreatedAt -or
+        -not $approvalCreatedAtMatches -or
         (Get-RecoverySha256 ([Text.UTF8Encoding]::new($false, $true).GetBytes($approvalBody))) -cne
             ([string](Get-RecoveryRequiredProperty $approvalEvidence 'body_sha256')).ToLowerInvariant()) {
         throw 'Historical terminal approval binding is invalid.'

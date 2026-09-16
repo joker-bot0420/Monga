@@ -23,11 +23,11 @@ function Write-Json([string]$Path, [object]$Value) {
 function Get-FileSha([string]$Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 function Get-BodySha([string]$Body) { return Get-RecoverySha256 $utf8.GetBytes($Body) }
 
-function New-Fixture([string]$Name) {
+function New-Fixture([string]$Name, [object]$CreatedAt = '2026-09-07T00:05:03Z') {
     $root = Join-Path $suite $Name
     $envelope = [ordered]@{
         schema_version=1; repository='joker-bot0420/Monga'; pr_number=23; comment_id=$id
-        author='joker-bot0420'; created_at='2026-09-07T00:05:03Z'; marker='[TOLLGATE_APPROVED]'
+        author='joker-bot0420'; created_at=$CreatedAt; marker='[TOLLGATE_APPROVED]'
         body='[TOLLGATE_APPROVED] TG-AUTO-02-EXT synthetic historical fixture'; status='pending'
     }
     Write-Json (Join-Path $root "pending\$id.json") $envelope
@@ -76,6 +76,23 @@ function Assert-Fails([scriptblock]$Action, [string]$Name) {
 }
 
 try {
+    foreach ($sameInstant in @(
+        '2026-09-07T00:05:03Z',
+        '2026-09-07T00:05:03.0000000+00:00',
+        '2026-09-07T09:05:03+09:00'
+    )) {
+        if (-not (Test-HistoricalTimestampInstantEqual $sameInstant '2026-09-07T00:05:03Z')) {
+            throw "Equivalent historical timestamp was rejected: $sameInstant"
+        }
+    }
+    foreach ($invalidInstant in @('2026-09-07T00:05:04Z', '09/07/2026 00:05:03', 'not-a-timestamp')) {
+        if (Test-HistoricalTimestampInstantEqual $invalidInstant '2026-09-07T00:05:03Z') {
+            throw "Invalid or different historical timestamp was accepted: $invalidInstant"
+        }
+    }
+    if (Test-HistoricalTimestampInstantEqual ([DateTime]::SpecifyKind([DateTime]'2026-09-07T00:05:03', [DateTimeKind]::Unspecified)) '2026-09-07T00:05:03Z') {
+        throw 'Ambiguous DateTime timestamp was accepted.'
+    }
     $tokens=$null;$parseErrors=$null
     $reporterAst=[Management.Automation.Language.Parser]::ParseFile($reporter,[ref]$tokens,[ref]$parseErrors)
     if($parseErrors.Count){throw 'Production reporter parser validation failed.'}
@@ -115,6 +132,38 @@ try {
     $reporterResult = Invoke-HistoricalReporterDryRun $normal
     if ($reporterResult.ExitCode -ne 0 -or (@($reporterResult.Output) -join "`n") -notmatch '\[TOLLGATE_REPORT_READY\]') {
         throw "Historical reporter main-path DryRun failed: $(@($reporterResult.Output) -join ' | ')"
+    }
+    $fractionalTimestamp = New-Fixture 'fractional-timestamp' '2026-09-07T00:05:03.0000000+00:00'
+    $fractionalResult = Invoke-Recovery $fractionalTimestamp
+    if ($fractionalResult.ExitCode -ne 0 -or
+        (Test-Path (Join-Path $fractionalTimestamp "pending\$id.json")) -or
+        -not (Test-Path (Join-Path $fractionalTimestamp "archive\pending\$id.json")) -or
+        -not (Test-Path (Join-Path $fractionalTimestamp "audit\$id-recovery.json")) -or
+        -not (Test-Path (Join-Path $fractionalTimestamp "failed\$id.json"))) {
+        throw "Fractional timestamp settlement failed: $(@($fractionalResult.Output) -join ' | ')"
+    }
+    $fractionalTerminal = Get-Content (Join-Path $fractionalTimestamp "failed\$id.json") -Raw -Encoding utf8 | ConvertFrom-Json
+    $fractionalManifest = Get-Content (Join-Path $fractionalTimestamp 'evidence-manifest.json') -Raw -Encoding utf8 | ConvertFrom-Json
+    Assert-HistoricalRecoveryTerminalRecordAgainstManifest $fractionalTerminal $fractionalManifest
+
+    foreach ($identityMutation in @('author','comment','body')) {
+        $identityCase = New-Fixture "approval-$identityMutation"
+        $identityPending = Join-Path $identityCase "pending\$id.json"
+        $identityEnvelope = Get-Content $identityPending -Raw -Encoding utf8 | ConvertFrom-Json
+        switch ($identityMutation) {
+            'author' { $identityEnvelope.author = 'untrusted-user' }
+            'comment' { $identityEnvelope.comment_id = 5563219044L }
+            'body' { $identityEnvelope.body = '[TOLLGATE_APPROVED] changed body' }
+        }
+        Write-Json $identityPending $identityEnvelope
+        $identityManifestPath = Join-Path $identityCase 'evidence-manifest.json'
+        $identityManifest = Get-Content $identityManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
+        $identityManifest.pending_sha256 = Get-FileSha $identityPending
+        Write-Json $identityManifestPath $identityManifest
+        Assert-Fails { Invoke-Recovery $identityCase } "approval $identityMutation mismatch"
+        if (Test-Path (Join-Path $identityCase "audit\$id-recovery.json")) {
+            throw "Approval $identityMutation mismatch created lifecycle artifacts."
+        }
     }
     $production = Get-ProductionHistoricalEvidenceManifest
     if ([string]$production.pending_sha256 -cne 'c1a38025d51c0df53e41fb69dfbea7c259812053d7e03af06f496f267b827fd5' -or
