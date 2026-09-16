@@ -247,6 +247,7 @@ function Assert-TerminalRecord {
     if ($terminalStatus -eq 'TOLLGATE_REACHED' -and [bool]$requiresUser) { throw 'TOLLGATE_REACHED requires_user mismatch.' }
     if ($terminalStatus -eq 'STOP_REQUIRED' -and -not [bool]$requiresUser) { throw 'STOP_REQUIRED requires_user mismatch.' }
 }
+
 function ConvertTo-SafeReportText {
     param([AllowEmptyString()][string]$Text)
     $safe = if ($null -eq $Text) { '' } else { $Text }
@@ -568,7 +569,7 @@ try {
         $taskLockPath = Join-Path $stateRoot "orchestrator/task-$commentId.lock"
         Assert-HistoricalNoReparsePath -TrustedAnchor $stateTrustedAnchor -Root $stateRoot -Path $taskLockPath
         [void][IO.Directory]::CreateDirectory((Split-Path $taskLockPath -Parent))
-        Assert-HistoricalNoReparsePath $stateTrustedAnchor $stateRoot $taskLockPath
+        Assert-HistoricalNoReparsePath -TrustedAnchor $stateTrustedAnchor -Root $stateRoot -Path $taskLockPath
         # Serialize discovery, optional publication, verification, and the
         # reported-state commit with settlement and direct executor users of
         # the same approval-specific lock identity.
