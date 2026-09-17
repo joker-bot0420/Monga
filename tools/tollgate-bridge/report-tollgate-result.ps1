@@ -223,7 +223,7 @@ function Assert-TerminalRecord {
     $approval = Get-RequiredProperty $Record 'original_approval'
     if ([int](Get-RequiredProperty $approval 'schema_version') -ne 1) { throw 'Approval schema_version must be 1.' }
     if ([string](Get-RequiredProperty $approval 'repository') -cne $repository) { throw 'Approval repository is invalid.' }
-    if ([int](Get-RequiredProperty $approval 'pr_number') -ne $prNumber) { throw 'Approval PR number is invalid.' }
+    if ([int](Get-RequiredProperty $approval 'pr_number') -le 0) { throw 'Approval PR number is invalid.' }
     if ([string](Get-RequiredProperty $approval 'author') -cne $trustedUser) { throw 'Approval author is not trusted.' }
     if ([string](Get-RequiredProperty $approval 'marker') -cne $approvalMarker) { throw 'Approval marker is invalid.' }
     if ([string]::IsNullOrWhiteSpace([string](Get-RequiredProperty $approval 'body'))) { throw 'Approval body is empty.' }
@@ -248,6 +248,12 @@ function Assert-TerminalRecord {
     if ($requiresUser -isnot [bool]) { throw 'requires_user must be boolean.' }
     if ($terminalStatus -eq 'TOLLGATE_REACHED' -and [bool]$requiresUser) { throw 'TOLLGATE_REACHED requires_user mismatch.' }
     if ($terminalStatus -eq 'STOP_REQUIRED' -and -not [bool]$requiresUser) { throw 'STOP_REQUIRED requires_user mismatch.' }
+}
+
+function Assert-TerminalControlPr {
+    param([Parameter(Mandatory = $true)][object]$Record)
+    $approval = Get-RequiredProperty $Record 'original_approval'
+    if ([int](Get-RequiredProperty $approval 'pr_number') -ne $prNumber) { throw 'Approval PR number does not match the configured control PR.' }
 }
 
 function ConvertTo-SafeReportText {
@@ -531,6 +537,10 @@ try {
             Assert-HistoricalNoReparsePath -TrustedAnchor $stateTrustedAnchor -Root $stateRoot -Path $file.FullName
             $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
             $hash = Get-BytesSha256 -Bytes $bytes
+            $text = $utf8NoBom.GetString($bytes)
+            if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+            $candidateRecord = ConvertFrom-Json -InputObject $text
+            Assert-TerminalRecord -Record $candidateRecord -RecordPath $file.FullName
             $reportedFile = Join-Path $reportedDirectory $file.Name
             Assert-HistoricalNoReparsePath -TrustedAnchor $stateTrustedAnchor -Root $stateRoot -Path $reportedFile
             if (-not (Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $hash)) {
@@ -565,6 +575,7 @@ try {
     $hasRecovery = $null -ne $record.PSObject.Properties['recovery']
 
     if ($HistoricalRecovery) {
+        Assert-TerminalControlPr -Record $record
         if (-not $hasRecovery) { throw 'Historical recovery mode requires a recovery terminal record.' }
         Assert-HistoricalRecoveryEvidenceArtifacts -Record $record -TerminalPath $resolvedResultFile `
             -StateRoot $stateRoot -StateOwnerRepositoryRoot $stateTrustedAnchor `
@@ -591,6 +602,9 @@ try {
             Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $commentId"
             exit 0
         }
+        # Retained records may belong to a previous control PR. Only an exact,
+        # structurally valid reported record may bypass the live target check.
+        Assert-TerminalControlPr -Record $record
     }
 
     $settlementKey = if ($HistoricalRecovery) { Get-HistoricalSettlementKey -TerminalSha256 $terminalHash } else { '' }
