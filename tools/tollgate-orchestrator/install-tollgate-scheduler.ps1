@@ -2,6 +2,8 @@
 param(
     [string]$CodexExecutable,
     [string[]]$TrustedSearchRoots = @(),
+    [ValidateRange(1,2147483647)][int]$ControlPrNumber = 23,
+    [ValidateNotNullOrEmpty()][string]$ExpectedBranch = 'feat/model-candidate-evaluation',
     [ValidateRange(30,1800)][int]$TimeoutSeconds = 300
 )
 # Dot-sourcing is never an installation action.
@@ -14,7 +16,8 @@ $codex = Resolve-TollgateCodexExecutable -ExplicitPath $CodexExecutable -Trusted
 $entry = Assert-TollgateLocalPath (Join-Path $PSScriptRoot 'run-tollgate-orchestrator.ps1')
 if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) { throw 'Orchestrator entry point is missing.' }
 # Same encoded literal transport as the existing bridge adapter. No candidate is run.
-$command = '$ErrorActionPreference = ''Stop''; try { & ''' + $entry.Replace("'", "''") + ''' -CodexExecutable ''' + $codex.Replace("'", "''") + ''' -TimeoutSeconds ' + $TimeoutSeconds + '; if (-not $?) { exit 1 }; exit 0 } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }'
+$branchLiteral = $ExpectedBranch.Replace("'", "''")
+$command = '$ErrorActionPreference = ''Stop''; try { & ''' + $entry.Replace("'", "''") + ''' -CodexExecutable ''' + $codex.Replace("'", "''") + ''' -ControlPrNumber ' + $ControlPrNumber + ' -ExpectedBranch ''' + $branchLiteral + ''' -TimeoutSeconds ' + $TimeoutSeconds + '; if (-not $?) { exit 1 }; exit 0 } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }'
 $arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
 $xml = New-TollgateSchedulerXml $identity $arguments
 if ($PSCmdlet.ShouldProcess(('\' + $identity.Name), 'Register current-user tollgate scheduler (first run in five minutes)')) {
@@ -24,5 +27,5 @@ if ($PSCmdlet.ShouldProcess(('\' + $identity.Name), 'Register current-user tollg
     # TASK_CREATE=2 (never CREATE_OR_UPDATE), TASK_LOGON_INTERACTIVE_TOKEN=3.
     # No password, elevation, immediate start, or automatic retry registration.
     [void]$folder.RegisterTask($identity.Name, $xml, 2, $identity.Sid, $null, 3, $null)
-    [pscustomobject]@{ TaskPath = '\' + $identity.Name; Status = 'Installed'; CodexExecutable = $codex }
+    [pscustomobject]@{ TaskPath = '\' + $identity.Name; Status = 'Installed'; CodexExecutable = $codex; ControlPrNumber = $ControlPrNumber; ExpectedBranch = $ExpectedBranch }
 }
