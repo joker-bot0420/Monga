@@ -1,13 +1,15 @@
 ﻿[CmdletBinding()]
 param(
-    [switch]$SerializationSelfTest
+    [switch]$SerializationSelfTest,
+    [ValidateRange(1, 2147483647)]
+    [int]$ControlPrNumber = 23
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repository = 'joker-bot0420/Monga'
-$prNumber = 23
+$prNumber = $ControlPrNumber
 $trustedUser = 'joker-bot0420'
 $triggerMarker = '[TOLLGATE_APPROVED]'
 
@@ -145,7 +147,7 @@ try {
         throw "Watcher not found: $watcherPath"
     }
 
-    $watcherOutput = & $watcherPath -StageResult 2>&1
+    $watcherOutput = & $watcherPath -StageResult -ControlPrNumber $ControlPrNumber 2>&1
     $watcherExitCode = $LASTEXITCODE
     if ($watcherExitCode -ne 0) {
         $details = ($watcherOutput | Out-String).Trim()
