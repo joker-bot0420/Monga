@@ -6,6 +6,8 @@ $suite = Join-Path $PSScriptRoot ('state/integration-' + [guid]::NewGuid().ToStr
 $fixtureTools = Join-Path $suite 'tools/tollgate-orchestrator'
 $fixtureBridge = Join-Path $suite 'tools/tollgate-bridge'
 $state = Join-Path $suite '.tollgate-local'
+$controlPr = 47
+$expectedBranch = 'tollgate/live-control-v1'
 foreach ($dir in @($fixtureTools,$fixtureBridge,(Join-Path $state 'pending'),(Join-Path $state 'completed'),(Join-Path $state 'failed'))) {
     [void][IO.Directory]::CreateDirectory($dir)
 }
@@ -18,26 +20,29 @@ $common = @'
 $ErrorActionPreference = 'Stop'
 $state = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) '.tollgate-local'
 '@
-[IO.File]::WriteAllText((Join-Path $fixtureBridge 'prepare-tollgate-task.ps1'), $common + @'
+[IO.File]::WriteAllText((Join-Path $fixtureBridge 'prepare-tollgate-task.ps1'), @'
+param([int]$ControlPrNumber)
+'@ + "`n" + $common + @'
 
+if ($ControlPrNumber -ne 47) { exit 11 }
 [IO.File]::AppendAllText((Join-Path $state 'calls'), "prepare`n")
 if (Test-Path (Join-Path $state 'prepare-error')) { exit 12 }
 '@)
 [IO.File]::WriteAllText((Join-Path $fixtureBridge 'run-tollgate-task.ps1'), @'
-param([switch]$RunPending,[string]$TaskFile,[int]$TimeoutSeconds)
+param([switch]$RunPending,[string]$TaskFile,[int]$TimeoutSeconds,[int]$ControlPrNumber,[string]$ExpectedBranch)
 '@ + "`n" + $common + @'
 
-if (-not $RunPending -or $TimeoutSeconds -ne 90 -or -not (Test-Path -LiteralPath $TaskFile)) { exit 13 }
+if (-not $RunPending -or $TimeoutSeconds -ne 90 -or $ControlPrNumber -ne 47 -or $ExpectedBranch -cne 'tollgate/live-control-v1' -or -not (Test-Path -LiteralPath $TaskFile)) { exit 13 }
 if ($env:GH_TOKEN -or $env:GITHUB_TOKEN) { exit 14 }
 [IO.File]::AppendAllText((Join-Path $state 'calls'), "executor`n")
 if (Test-Path (Join-Path $state 'executor-error')) { exit 15 }
 [IO.File]::WriteAllText((Join-Path $state 'completed/result.json'), '{}')
 '@)
 [IO.File]::WriteAllText((Join-Path $fixtureBridge 'report-tollgate-result.ps1'), @'
-param([switch]$Publish,[string]$ResultFile)
+param([switch]$Publish,[string]$ResultFile,[int]$ControlPrNumber)
 '@ + "`n" + $common + @'
 
-if (-not $Publish -or -not (Test-Path -LiteralPath $ResultFile)) { exit 16 }
+if (-not $Publish -or $ControlPrNumber -ne 47 -or -not (Test-Path -LiteralPath $ResultFile)) { exit 16 }
 [IO.File]::AppendAllText((Join-Path $state 'calls'), "reporter`n")
 if (Test-Path (Join-Path $state 'reporter-error')) { exit 17 }
 '@)
@@ -49,26 +54,26 @@ function Assert-Fails([scriptblock]$Action) {
     try { & $Action | Out-Null } catch { $failed = $true }
     if (-not $failed) { throw 'Expected stage failure.' }
 }
-# Missing CLI is harmless when no pending work exists.
-$r = & $entry
+# Missing CLI is harmless when no pending work exists; target still reaches prepare.
+$r = & $entry -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch
 if ($r.PendingInvoked -or $r.TerminalInvocations) { throw 'No-work failed.' }
 $task = Join-Path $state 'pending/task.json'
 [IO.File]::WriteAllText($task, '{}')
 $hash = (Get-FileHash $task).Hash
-Assert-Fails { & $entry }
+Assert-Fails { & $entry -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
 if ((Get-FileHash $task).Hash -ne $hash) { throw 'Discovery failure altered pending.' }
-$r = & $entry -CodexExecutable $exe -TimeoutSeconds 90
+$r = & $entry -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch -TimeoutSeconds 90
 if (-not $r.PendingInvoked -or $r.TerminalInvocations -ne 1) { throw 'Production routing failed.' }
 $calls = @(Get-Content (Join-Path $state 'calls'))
 if (($calls -join ',') -ne 'prepare,prepare,prepare,executor,reporter') { throw 'Stage order failed.' }
 [IO.File]::WriteAllText((Join-Path $state 'reporter-error'), 'fixture')
-Assert-Fails { & $entry -CodexExecutable $exe -TimeoutSeconds 90 }
+Assert-Fails { & $entry -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch -TimeoutSeconds 90 }
 [IO.File]::WriteAllText((Join-Path $state 'executor-error'), 'fixture')
-Assert-Fails { & $entry -CodexExecutable $exe -TimeoutSeconds 90 }
+Assert-Fails { & $entry -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch -TimeoutSeconds 90 }
 [IO.File]::WriteAllText((Join-Path $state 'prepare-error'), 'fixture')
-Assert-Fails { & $entry -CodexExecutable $exe -TimeoutSeconds 90 }
+Assert-Fails { & $entry -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch -TimeoutSeconds 90 }
 if ((Get-FileHash $task).Hash -ne $hash -or (Test-Path (Join-Path $state 'reported'))) { throw 'False lifecycle mutation.' }
 . (Join-Path $source 'Orchestrator.Lock.ps1')
 $lock = Enter-TollgateOrchestratorLock (Join-Path $state 'orchestrator/orchestrator.lock')
 $lock.Dispose()
-Write-Output "PASS: unchanged entry/helper fixture, no-work, discovery failure, production stage order and arguments, all stage failures, pending preservation and lock release. Fixture: $suite"
+Write-Output "PASS: unchanged entry/helper fixture, live control target transport, no-work, discovery failure, production stage order and arguments, all stage failures, pending preservation and lock release. Fixture: $suite"
