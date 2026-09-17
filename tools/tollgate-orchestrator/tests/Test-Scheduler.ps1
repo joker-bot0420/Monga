@@ -13,6 +13,8 @@ foreach ($name in @('Orchestrator.Scheduler.ps1','Orchestrator.ExecutorEnvironme
 [IO.File]::WriteAllText((Join-Path $fixture 'run-tollgate-orchestrator.ps1'), 'throw "Scheduler tests must never run an orchestrator."')
 $exe = Join-Path $suite 'codex.exe'
 [IO.File]::WriteAllText($exe, 'Inert; never execute.')
+$controlPr = 47
+$expectedBranch = 'tollgate/live-control-v1'
 $global:connections = 0
 $global:registrations = 0
 $global:removals = 0
@@ -80,15 +82,16 @@ $parentPath = $env:PATH
 . (Join-Path $fixture 'Orchestrator.Scheduler.ps1')
 $global:identity = Get-TollgateSchedulerIdentity
 if ($connections -or $registrations -or $removals) { throw 'Import side effect.' }
-& $install -CodexExecutable $exe -WhatIf
+& $install -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch -WhatIf
 & $uninstall -WhatIf
 if ($connections) { throw 'WhatIf contacted scheduler.' }
 Assert-Fails { & $install }
 Assert-Fails { & $install -CodexExecutable 'relative/codex.exe' }
 Assert-Fails { & $install -CodexExecutable $exe -TimeoutSeconds 1 }
+Assert-Fails { & $install -CodexExecutable $exe -ControlPrNumber 0 }
 if ($connections) { throw 'Invalid configuration contacted scheduler.' }
-$r = & $install -TrustedSearchRoots $suite -TimeoutSeconds 90
-if ($r.Status -cne 'Installed' -or $registrations -ne 1) { throw 'Install failed.' }
+$r = & $install -TrustedSearchRoots $suite -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch -TimeoutSeconds 90
+if ($r.Status -cne 'Installed' -or $registrations -ne 1 -or $r.ControlPrNumber -ne $controlPr -or $r.ExpectedBranch -cne $expectedBranch) { throw 'Install failed.' }
 [xml]$xml = $capturedXml
 if ($xml.Task.Principals.Principal.UserId -cne $identity.Sid -or $xml.Task.Principals.Principal.LogonType -cne 'InteractiveToken' -or $xml.Task.Principals.Principal.RunLevel -cne 'LeastPrivilege') { throw 'Unsafe principal.' }
 if ($xml.Task.Triggers.TimeTrigger.Repetition.Interval -cne 'PT5M' -or $xml.Task.Triggers.ChildNodes.Count -ne 1 -or $xml.Task.Settings.MultipleInstancesPolicy -cne 'IgnoreNew' -or $xml.Task.Settings.AllowStartOnDemand -cne 'false' -or $xml.Task.Settings.WakeToRun -cne 'false' -or $xml.Task.Settings.StartWhenAvailable -cne 'false' -or $xml.Task.Settings.ExecutionTimeLimit -cne 'PT0S') { throw 'Wrong schedule.' }
@@ -100,8 +103,19 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseInput($code, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Encoded action parse failure.' }
 $command = $ast.Find({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.InvocationOperator -eq 'Ampersand' }, $true)
-if ($command.CommandElements[0].SafeGetValue() -cne (Join-Path $fixture 'run-tollgate-orchestrator.ps1') -or $command.CommandElements[2].SafeGetValue() -cne $exe -or $command.CommandElements[4].SafeGetValue() -ne 90) { throw 'Literal action transport changed.' }
-Assert-Fails { & $install -CodexExecutable $exe }
+$elements = @($command.CommandElements)
+if ($elements[0].SafeGetValue() -cne (Join-Path $fixture 'run-tollgate-orchestrator.ps1')) { throw 'Orchestrator path transport changed.' }
+$actual = @{}
+for ($i = 1; $i -lt $elements.Count; $i += 2) {
+    $name = [string]$elements[$i].Extent.Text
+    if ($i + 1 -ge $elements.Count) { throw 'Missing scheduler action parameter value.' }
+    $actual[$name] = $elements[$i + 1].SafeGetValue()
+}
+if ($actual['-CodexExecutable'] -cne $exe -or [int]$actual['-ControlPrNumber'] -ne $controlPr -or
+    [string]$actual['-ExpectedBranch'] -cne $expectedBranch -or [int]$actual['-TimeoutSeconds'] -ne 90) {
+    throw 'Pinned live-control action transport changed.'
+}
+Assert-Fails { & $install -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
 if ($registrations -ne 1) { throw 'Existing task overwritten.' }
 $owned = $existing
 foreach ($change in @('owner','sid','path','command','arguments','extra-action','runlevel')) {
@@ -118,7 +132,7 @@ foreach ($change in @('owner','sid','path','command','arguments','extra-action',
     }
     $global:existing = [pscustomobject]@{ Path = $taskPath; Xml = $altered.OuterXml }
     Assert-Fails { & $uninstall }
-    Assert-Fails { & $install -CodexExecutable $exe }
+    Assert-Fails { & $install -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
 }
 if ($removals -or $registrations -ne 1) { throw 'Collision mutated task.' }
 $global:existing = $owned
@@ -130,13 +144,13 @@ if ($r.Status -cne 'Uninstalled' -or $removals -ne 1) { throw 'Owned uninstall f
 $r = & $uninstall
 if ($r.Status -cne 'Absent' -or $removals -ne 1) { throw 'Absent uninstall mutated task.' }
 $global:lookupFailure = $true
-Assert-Fails { & $install -CodexExecutable $exe }
+Assert-Fails { & $install -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
 Assert-Fails { & $uninstall }
 $global:lookupFailure = $false
 $global:race = $true
-Assert-Fails { & $install -CodexExecutable $exe }
+Assert-Fails { & $install -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
 $global:race = $false
 $global:registrationFailure = $true
-Assert-Fails { & $install -CodexExecutable $exe }
+Assert-Fails { & $install -CodexExecutable $exe -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
 if ($registrations -ne 1 -or $removals -ne 1 -or $env:PATH -cne $parentPath) { throw 'Unexpected mutation.' }
-Write-Output "PASS: import/WhatIf isolation, absolute discovery and literal transport, schedule/principal, exact ownership, collisions/create race, absent task, service errors; only fake registration=1/removal=1; no start API. Fixture: $suite"
+Write-Output "PASS: import/WhatIf isolation, absolute discovery and pinned live-control target transport, schedule/principal, exact ownership, collisions/create race, absent task, service errors; only fake registration=1/removal=1; no start API. Fixture: $suite"
