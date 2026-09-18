@@ -46,7 +46,7 @@ python finetune/train_sft.py \
   --epochs 3
 ```
 
-The script uses 4-bit QLoRA by default. It trains only adapter weights and uses TRL's assistant-only loss on the conversational `messages` dataset.
+The script uses 4-bit QLoRA by default. It trains only adapter weights and converts each conversational example into a prompt/completion pair so loss is applied only to the assistant completion.
 
 ## First success criterion
 
