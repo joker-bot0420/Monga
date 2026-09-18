@@ -1,0 +1,5 @@
+# Install PyTorch/CUDA as appropriate for the machine first.
+unsloth
+trl>=0.24.0
+datasets>=3.0.0
+accelerate>=1.0.0
