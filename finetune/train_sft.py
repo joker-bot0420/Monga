@@ -2,9 +2,10 @@
 import argparse
 from pathlib import Path
 
+import unsloth
+from unsloth import FastLanguageModel, is_bfloat16_supported
 from datasets import load_dataset
 from trl import SFTConfig, SFTTrainer
-from unsloth import FastLanguageModel, is_bfloat16_supported
 
 TARGET_MODULES = [
     "q_proj",
@@ -51,6 +52,17 @@ def main():
         full_finetuning=False,
     )
 
+    if tokenizer.eos_token is None or tokenizer.eos_token_id is None:
+        raise RuntimeError("Tokenizer has no valid EOS token.")
+    if tokenizer.pad_token is None or tokenizer.pad_token_id is None:
+        raise RuntimeError("Tokenizer has no valid PAD token.")
+
+    print(
+        f"tokenizer special tokens: eos={tokenizer.eos_token!r} "
+        f"(id={tokenizer.eos_token_id}), "
+        f"pad={tokenizer.pad_token!r} (id={tokenizer.pad_token_id})"
+    )
+
     model = FastLanguageModel.get_peft_model(
         model,
         r=args.lora_r,
@@ -71,7 +83,7 @@ def main():
         gradient_accumulation_steps=args.grad_accum,
         num_train_epochs=args.epochs,
         learning_rate=args.learning_rate,
-        warmup_ratio=0.05,
+        warmup_steps=1,
         logging_steps=1,
         eval_strategy="epoch",
         save_strategy="epoch",
@@ -83,6 +95,8 @@ def main():
         bf16=is_bfloat16_supported(),
         fp16=not is_bfloat16_supported(),
         assistant_only_loss=True,
+        eos_token=tokenizer.eos_token,
+        pad_token=tokenizer.pad_token,
         packing=False,
     )
 
