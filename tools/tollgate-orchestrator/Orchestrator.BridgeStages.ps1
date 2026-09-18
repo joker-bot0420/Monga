@@ -13,6 +13,8 @@ function New-TollgateBridgeStage {
         [string]$CodexExecutable,
         [string[]]$TrustedSearchRoots = @(),
         [string]$IsolationRoot,
+        [ValidateRange(1,2147483647)][int]$ControlPrNumber = 23,
+        [ValidateNotNullOrEmpty()][string]$ExpectedBranch = 'feat/model-candidate-evaluation',
         [ValidateRange(30,1800)][int]$TimeoutSeconds = 300
     )
     $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -22,16 +24,22 @@ function New-TollgateBridgeStage {
         Prepare {
             if ($InputFile) { throw 'Prepare does not accept an input file.' }
             $scriptName = 'prepare-tollgate-task.ps1'
+            $parameters = @{ ControlPrNumber = $ControlPrNumber }
         }
         Executor {
             $scriptName = 'run-tollgate-task.ps1'
             $directories = @('pending')
-            $parameters = @{ RunPending = $true; TimeoutSeconds = $TimeoutSeconds }
+            $parameters = @{
+                RunPending = $true
+                TimeoutSeconds = $TimeoutSeconds
+                ControlPrNumber = $ControlPrNumber
+                ExpectedBranch = $ExpectedBranch
+            }
         }
         Reporter {
             $scriptName = 'report-tollgate-result.ps1'
             $directories = @('completed','failed')
-            $parameters = @{ Publish = $true }
+            $parameters = @{ Publish = $true; ControlPrNumber = $ControlPrNumber }
         }
     }
     if ($Stage -ne 'Prepare') {

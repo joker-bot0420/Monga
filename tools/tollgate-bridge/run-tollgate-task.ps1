@@ -10,6 +10,10 @@ param(
     [switch]$ProtectionSelfTest,
     [string]$SyntheticStateRoot,
     [string]$SyntheticBeforeTaskLockHook,
+    [ValidateRange(1, 2147483647)]
+    [int]$ControlPrNumber = 23,
+    [ValidateNotNullOrEmpty()]
+    [string]$ExpectedBranch = 'feat/model-candidate-evaluation',
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 300
 )
@@ -18,7 +22,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repository = 'joker-bot0420/Monga'
-$prNumber = 23
+$prNumber = $ControlPrNumber
 $trustedUser = 'joker-bot0420'
 $triggerMarker = '[TOLLGATE_APPROVED]'
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'tollgate-orchestrator/Orchestrator.Lock.ps1')
@@ -664,7 +668,7 @@ function Invoke-LifecycleSelfTest {
         return [pscustomobject][ordered]@{
             schema_version = 1
             repository = 'joker-bot0420/Monga'
-            pr_number = 23
+            pr_number = $prNumber
             comment_id = $CommentId
             author = 'joker-bot0420'
             created_at = '2026-09-04T00:00:00Z'
@@ -910,9 +914,9 @@ function Assert-RepositoryPreflight {
         [string]$RepositoryRoot
     )
 
-    $expectedBranch = 'feat/model-candidate-evaluation'
+    $expectedBranch = $ExpectedBranch
     $expectedOrigin = 'https://github.com/joker-bot0420/Monga.git'
-    $expectedUpstream = 'origin/feat/model-candidate-evaluation'
+    $expectedUpstream = "origin/$ExpectedBranch"
 
     $branch = (& git -C $RepositoryRoot branch --show-current | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $branch -cne $expectedBranch) {
@@ -1557,7 +1561,6 @@ try {
             Write-Output 'MULTIPLE_PENDING_TOLLGATES'
             exit 2
         }
-
         $resolvedTaskFile = Get-NormalizedPath -Path $pendingTasks[0].FullName
         $allowedParent = $pendingDirectory
     } else {

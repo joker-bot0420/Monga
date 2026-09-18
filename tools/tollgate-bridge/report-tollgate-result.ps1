@@ -5,6 +5,8 @@ param(
     [switch]$Publish,
     [switch]$HistoricalRecovery,
     [string]$ProductionStateRoot,
+    [ValidateRange(1, 2147483647)]
+    [int]$ControlPrNumber = 23,
     [switch]$SelfTest
 )
 
@@ -12,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repository = 'joker-bot0420/Monga'
-$prNumber = 23
+$prNumber = if ($HistoricalRecovery) { 23 } else { $ControlPrNumber }
 $trustedUser = 'joker-bot0420'
 $approvalMarker = '[TOLLGATE_APPROVED]'
 $reservedMarkers = @(
@@ -221,7 +223,7 @@ function Assert-TerminalRecord {
     $approval = Get-RequiredProperty $Record 'original_approval'
     if ([int](Get-RequiredProperty $approval 'schema_version') -ne 1) { throw 'Approval schema_version must be 1.' }
     if ([string](Get-RequiredProperty $approval 'repository') -cne $repository) { throw 'Approval repository is invalid.' }
-    if ([int](Get-RequiredProperty $approval 'pr_number') -ne $prNumber) { throw 'Approval PR number is invalid.' }
+    if ([int](Get-RequiredProperty $approval 'pr_number') -le 0) { throw 'Approval PR number is invalid.' }
     if ([string](Get-RequiredProperty $approval 'author') -cne $trustedUser) { throw 'Approval author is not trusted.' }
     if ([string](Get-RequiredProperty $approval 'marker') -cne $approvalMarker) { throw 'Approval marker is invalid.' }
     if ([string]::IsNullOrWhiteSpace([string](Get-RequiredProperty $approval 'body'))) { throw 'Approval body is empty.' }
@@ -246,6 +248,12 @@ function Assert-TerminalRecord {
     if ($requiresUser -isnot [bool]) { throw 'requires_user must be boolean.' }
     if ($terminalStatus -eq 'TOLLGATE_REACHED' -and [bool]$requiresUser) { throw 'TOLLGATE_REACHED requires_user mismatch.' }
     if ($terminalStatus -eq 'STOP_REQUIRED' -and -not [bool]$requiresUser) { throw 'STOP_REQUIRED requires_user mismatch.' }
+}
+
+function Assert-TerminalControlPr {
+    param([Parameter(Mandatory = $true)][object]$Record)
+    $approval = Get-RequiredProperty $Record 'original_approval'
+    if ([int](Get-RequiredProperty $approval 'pr_number') -ne $prNumber) { throw 'Approval PR number does not match the configured control PR.' }
 }
 
 function ConvertTo-SafeReportText {
@@ -446,7 +454,7 @@ function Invoke-ReporterSelfTest {
         $settlementKey = Get-HistoricalSettlementKey ('c' * 64)
         $historicalBody = New-RenderedComment $historical $settlementKey
         Assert-OnlyLeadingControlMarker $historicalBody '[STOP_REQUIRED]'
-        $issueUrl = "https://api.github.com/repos/$repository/issues/$prNumber"
+        $issueUrl = "https://api.github.com/repos/$repository/issues/23"
         $existing = [pscustomobject]@{id=123;html_url='https://example/123';issue_url=$issueUrl;body=$historicalBody;user=[pscustomobject]@{login=$trustedUser}}
         if ((Find-HistoricalRecoveryComment @($existing) $settlementKey $historicalBody $trustedUser $issueUrl).id -ne 123) { throw 'Historical comment adoption failed.' }
         $counts=[pscustomobject]@{Create=0;Rediscover=0}
@@ -459,12 +467,12 @@ function Invoke-ReporterSelfTest {
         $recovered=Resolve-HistoricalRecoveryPublication @() $settlementKey $historicalBody $issueUrl { $counts.Create++;$null } { $counts.Rediscover++;@($existing) }
         if($recovered.id-ne 123-or$counts.Create-ne 1-or$counts.Rediscover-ne 1){throw 'Ambiguous publish rediscovery failed.'}
         $blocked=$false;try{[void](Resolve-HistoricalRecoveryPublication @() $settlementKey $historicalBody $issueUrl { $null } { @() })}catch{$blocked=$true};if(-not$blocked){throw 'Ambiguous publish without rediscovery evidence was accepted.'}
-        $pagination=[pscustomobject]@{Calls=0};$paged=@(Get-AllIssueCommentsWithFetcher $repository $prNumber {param($endpoint);$pagination.Calls++;if($pagination.Calls-eq 1){@(1..100|ForEach-Object{[pscustomobject]@{id=$_}})}else{@([pscustomobject]@{id=101})}})
+        $pagination=[pscustomobject]@{Calls=0};$paged=@(Get-AllIssueCommentsWithFetcher $repository 23 {param($endpoint);$pagination.Calls++;if($pagination.Calls-eq 1){@(1..100|ForEach-Object{[pscustomobject]@{id=$_}})}else{@([pscustomobject]@{id=101})}})
         if($paged.Count-ne 101-or$pagination.Calls-ne 2){throw 'Historical comment pagination failed.'}
         $reportedWriteFailed=$false;try{Write-JsonAtomically @{id=1} $testRoot}catch{$reportedWriteFailed=$true};if(-not$reportedWriteFailed){throw 'Reported-state write failure fixture did not fail.'}
         $counts=[pscustomobject]@{Create=0};$retryAdopted=Resolve-HistoricalRecoveryPublication @($existing) $settlementKey $historicalBody $issueUrl { $counts.Create++;$null } { @() }
         if($retryAdopted.id-ne 123-or$counts.Create-ne 0){throw 'Post-write-failure retry would duplicate the published comment.'}
-        Assert-ReporterPrState ([pscustomobject]@{number=23;state='open';merged_at=$null})
+        Assert-ReporterPrState ([pscustomobject]@{number=$prNumber;state='open';merged_at=$null})
         Assert-ReporterPrState ([pscustomobject]@{number=23;state='closed';merged_at='2026-09-07T00:31:07Z'}) -HistoricalRecovery
         Write-Output 'HISTORICAL_RECOVERY_REPORTER_TEST_OK'
     } finally {
@@ -477,6 +485,7 @@ function Invoke-ReporterSelfTest {
 $historicalTaskLock = $null
 try {
     if ($DryRun -and $Publish) { throw '-DryRun and -Publish are mutually exclusive.' }
+    if ($HistoricalRecovery -and $ControlPrNumber -ne 23) { throw '-HistoricalRecovery is permanently bound to PR #23.' }
     if ($HistoricalRecovery -and -not ($DryRun -or $Publish)) { throw '-HistoricalRecovery requires -DryRun or -Publish.' }
     if ($HistoricalRecovery -and [string]::IsNullOrWhiteSpace($ProductionStateRoot)) { throw '-ProductionStateRoot is required for historical recovery reporting.' }
     if (-not $HistoricalRecovery -and -not [string]::IsNullOrWhiteSpace($ProductionStateRoot)) { throw '-ProductionStateRoot is historical-recovery-only.' }
@@ -528,6 +537,10 @@ try {
             Assert-HistoricalNoReparsePath -TrustedAnchor $stateTrustedAnchor -Root $stateRoot -Path $file.FullName
             $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
             $hash = Get-BytesSha256 -Bytes $bytes
+            $text = $utf8NoBom.GetString($bytes)
+            if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+            $candidateRecord = ConvertFrom-Json -InputObject $text
+            Assert-TerminalRecord -Record $candidateRecord -RecordPath $file.FullName
             $reportedFile = Join-Path $reportedDirectory $file.Name
             Assert-HistoricalNoReparsePath -TrustedAnchor $stateTrustedAnchor -Root $stateRoot -Path $reportedFile
             if (-not (Assert-ReportedState -ReportedFile $reportedFile -ExpectedTerminalHash $hash)) {
@@ -562,6 +575,7 @@ try {
     $hasRecovery = $null -ne $record.PSObject.Properties['recovery']
 
     if ($HistoricalRecovery) {
+        Assert-TerminalControlPr -Record $record
         if (-not $hasRecovery) { throw 'Historical recovery mode requires a recovery terminal record.' }
         Assert-HistoricalRecoveryEvidenceArtifacts -Record $record -TerminalPath $resolvedResultFile `
             -StateRoot $stateRoot -StateOwnerRepositoryRoot $stateTrustedAnchor `
@@ -588,6 +602,9 @@ try {
             Write-Output "TOLLGATE_RESULT_ALREADY_REPORTED: $commentId"
             exit 0
         }
+        # Retained records may belong to a previous control PR. Only an exact,
+        # structurally valid reported record may bypass the live target check.
+        Assert-TerminalControlPr -Record $record
     }
 
     $settlementKey = if ($HistoricalRecovery) { Get-HistoricalSettlementKey -TerminalSha256 $terminalHash } else { '' }

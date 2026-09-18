@@ -22,6 +22,8 @@ $suite = Join-Path $PSScriptRoot ('state/adapters-' + [guid]::NewGuid().ToString
 [void][IO.Directory]::CreateDirectory($suite)
 $exe = Join-Path $suite 'codex.exe'
 [IO.File]::WriteAllText($exe, 'inert fixture; never execute')
+$controlPr = 47
+$expectedBranch = 'tollgate/live-control-v1'
 function Assert-Fails([scriptblock]$Action) {
     $failed = $false
     try { & $Action | Out-Null } catch { $failed = $true }
@@ -30,11 +32,11 @@ function Assert-Fails([scriptblock]$Action) {
 function Read-StageCommand($Info) {
     [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($Info.Arguments -split ' ')[-1]))
 }
-$prepare = New-TollgateBridgeStage -Stage Prepare
+$prepare = New-TollgateBridgeStage -Stage Prepare -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch
 $pending = Join-Path $repo ".tollgate-local/pending/task 'quoted'; dollar`$.json"
-$executor = New-TollgateBridgeStage -Stage Executor -InputFile $pending -CodexExecutable $exe -IsolationRoot $suite -TimeoutSeconds 90
-$reporter = New-TollgateBridgeStage -Stage Reporter -InputFile (Join-Path $repo '.tollgate-local/completed/result.json')
-$failedReporter = New-TollgateBridgeStage -Stage Reporter -InputFile (Join-Path $repo '.tollgate-local/failed/result.json')
+$executor = New-TollgateBridgeStage -Stage Executor -InputFile $pending -CodexExecutable $exe -IsolationRoot $suite -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch -TimeoutSeconds 90
+$reporter = New-TollgateBridgeStage -Stage Reporter -InputFile (Join-Path $repo '.tollgate-local/completed/result.json') -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch
+$failedReporter = New-TollgateBridgeStage -Stage Reporter -InputFile (Join-Path $repo '.tollgate-local/failed/result.json') -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch
 foreach ($info in @($prepare,$executor,$reporter,$failedReporter)) {
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseInput((Read-StageCommand $info), [ref]$tokens, [ref]$errors)
@@ -42,18 +44,19 @@ foreach ($info in @($prepare,$executor,$reporter,$failedReporter)) {
     # Extract literal parameter values without executing the bridge command.
     $table = $ast.Find({ param($node) $node -is [Management.Automation.Language.HashtableAst] }, $true).SafeGetValue()
     if ($info -eq $executor) {
-        if ($table.TaskFile -cne $pending -or -not $table.RunPending -or $table.TimeoutSeconds -ne 90) { throw 'Executor arguments changed.' }
+        if ($table.TaskFile -cne $pending -or -not $table.RunPending -or $table.TimeoutSeconds -ne 90 -or
+            $table.ControlPrNumber -ne $controlPr -or $table.ExpectedBranch -cne $expectedBranch) { throw 'Executor arguments changed.' }
         if ($info.EnvironmentVariables.ContainsKey('GH_TOKEN')) { throw 'Executor inherited token.' }
     } elseif ($info -eq $prepare) {
-        if ($table.Count -ne 0 -or (Read-StageCommand $info) -notlike '*prepare-tollgate-task.ps1*') { throw 'Prepare contract failed.' }
+        if ($table.Count -ne 1 -or $table.ControlPrNumber -ne $controlPr -or (Read-StageCommand $info) -notlike '*prepare-tollgate-task.ps1*') { throw 'Prepare contract failed.' }
     } else {
-        if (-not $table.Publish -or $table.ResultFile -notlike '*.json') { throw 'Reporter contract failed.' }
+        if (-not $table.Publish -or $table.ResultFile -notlike '*.json' -or $table.ControlPrNumber -ne $controlPr) { throw 'Reporter contract failed.' }
     }
 }
-Assert-Fails { New-TollgateBridgeStage -Stage Prepare -InputFile $pending }
-Assert-Fails { New-TollgateBridgeStage -Stage Executor -InputFile (Join-Path $suite 'task.json') }
-Assert-Fails { New-TollgateBridgeStage -Stage Reporter -InputFile $pending }
-Assert-Fails { New-TollgateBridgeStage -Stage Executor -InputFile $pending -IsolationRoot $suite }
+Assert-Fails { New-TollgateBridgeStage -Stage Prepare -InputFile $pending -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
+Assert-Fails { New-TollgateBridgeStage -Stage Executor -InputFile (Join-Path $suite 'task.json') -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
+Assert-Fails { New-TollgateBridgeStage -Stage Reporter -InputFile $pending -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
+Assert-Fails { New-TollgateBridgeStage -Stage Executor -InputFile $pending -IsolationRoot $suite -ControlPrNumber $controlPr -ExpectedBranch $expectedBranch }
 # Exercise the process runner with harmless child commands, never a bridge or Codex.
 function New-Probe([string]$Code) {
     $info = New-Object Diagnostics.ProcessStartInfo
@@ -71,5 +74,5 @@ $missing.FileName = Join-Path $suite 'missing.exe'
 Assert-Fails { Invoke-TollgateBridgeProcess $missing }
 $after = @(Get-ChildItem -LiteralPath $bridge -File | Get-FileHash -Algorithm SHA256)
 if (Compare-Object $before $after -Property Path,Hash) { throw 'Protected bridge bytes changed.' }
-Write-Output "PASS: stage argument transport, routing constraints, discovery failure, child exit/start failure, protected bridge hashes; fixture $suite"
+Write-Output "PASS: stage argument transport including live control PR/branch, routing constraints, discovery failure, child exit/start failure, protected bridge hashes; fixture $suite"
 Write-Output 'PASS: executor protected-file list explicitly includes reporter, historical recovery controls, and shared lock module by canonical path.'

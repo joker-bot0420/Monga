@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $sourceBridge = Split-Path $PSScriptRoot -Parent
 $suite = Join-Path $PSScriptRoot "state\normal-reporter-$([Guid]::NewGuid().ToString('N'))"
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
+$controlPr = 47
 
 function Write-Json([string]$Path, [object]$Value) {
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $Path))
@@ -13,7 +14,7 @@ function Write-Json([string]$Path, [object]$Value) {
 function New-Terminal([long]$Id, [string]$Status) {
     return [ordered]@{
         schema_version=1; comment_id=$Id
-        original_approval=[ordered]@{schema_version=1;repository='joker-bot0420/Monga';pr_number=23;comment_id=$Id;author='joker-bot0420';created_at='2026-09-01T00:00:00Z';marker='[TOLLGATE_APPROVED]';body='normal reporter path fixture';status='pending'}
+        original_approval=[ordered]@{schema_version=1;repository='joker-bot0420/Monga';pr_number=$controlPr;comment_id=$Id;author='joker-bot0420';created_at='2026-09-01T00:00:00Z';marker='[TOLLGATE_APPROVED]';body='normal reporter path fixture';status='pending'}
         terminal_status=$Status;iterations=1;finished_at='2026-09-01T00:01:00Z'
         final_result=[ordered]@{status=$Status;summary='fixture';requires_user=($Status -eq 'STOP_REQUIRED');evidence=@('fixture');changed_files=@();tests=@();next_action=''}
     }
@@ -37,9 +38,10 @@ function Install-FakeGh([string]$Root) {
     $driver = Join-Path $bin 'fake-gh.ps1'
     [IO.File]::WriteAllText($driver, @'
 $ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$pr=[int]$env:MONGA_FAKE_CONTROL_PR
 if($args[0]-eq'auth'){exit 0}
-if($args[0]-eq'pr'-and$args[1]-eq'comment'){$bodyFile=$args[[Array]::IndexOf($args,'--body-file')+1];[IO.File]::Copy($bodyFile,$env:MONGA_FAKE_GH_BODY,$true);[IO.File]::AppendAllText($env:MONGA_FAKE_GH_COUNT,"1`n");Write-Output 'https://github.com/joker-bot0420/Monga/pull/23#issuecomment-9900000001';exit 0}
-if($args[0]-eq'api'){$endpoint=$args[$args.Count-1];if($endpoint-eq'user'){Write-Output '{"login":"joker-bot0420"}';exit 0};if($endpoint-eq'repos/joker-bot0420/Monga/pulls/23'){Write-Output '{"number":23,"state":"open","merged_at":null}';exit 0};if($endpoint-eq'repos/joker-bot0420/Monga/issues/comments/9900000001'){$body=[IO.File]::ReadAllText($env:MONGA_FAKE_GH_BODY,[Text.Encoding]::UTF8);[ordered]@{id=9900000001;html_url='https://github.com/joker-bot0420/Monga/pull/23#issuecomment-9900000001';issue_url='https://api.github.com/repos/joker-bot0420/Monga/issues/23';body=$body;user=@{login='joker-bot0420'}}|ConvertTo-Json -Compress;exit 0}}
+if($args[0]-eq'pr'-and$args[1]-eq'comment'){$bodyFile=$args[[Array]::IndexOf($args,'--body-file')+1];[IO.File]::Copy($bodyFile,$env:MONGA_FAKE_GH_BODY,$true);[IO.File]::AppendAllText($env:MONGA_FAKE_GH_COUNT,"1`n");Write-Output "https://github.com/joker-bot0420/Monga/pull/$pr#issuecomment-9900000001";exit 0}
+if($args[0]-eq'api'){$endpoint=$args[$args.Count-1];if($endpoint-eq'user'){Write-Output '{"login":"joker-bot0420"}';exit 0};if($endpoint-eq"repos/joker-bot0420/Monga/pulls/$pr"){[ordered]@{number=$pr;state='open';merged_at=$null}|ConvertTo-Json -Compress;exit 0};if($endpoint-eq'repos/joker-bot0420/Monga/issues/comments/9900000001'){$body=[IO.File]::ReadAllText($env:MONGA_FAKE_GH_BODY,[Text.Encoding]::UTF8);[ordered]@{id=9900000001;html_url="https://github.com/joker-bot0420/Monga/pull/$pr#issuecomment-9900000001";issue_url="https://api.github.com/repos/joker-bot0420/Monga/issues/$pr";body=$body;user=@{login='joker-bot0420'}}|ConvertTo-Json -Compress;exit 0}}
 exit 9
 '@, $utf8)
     [IO.File]::WriteAllText((Join-Path $bin 'gh.cmd'), "@powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"%~dp0fake-gh.ps1`" %*`r`n@exit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
@@ -47,23 +49,25 @@ exit 9
 }
 
 function Invoke-Reporter([object]$Fixture, [switch]$Publish, [switch]$AutoDiscover, [string]$ResultFile) {
-    $oldPath=$env:PATH;$oldBody=$env:MONGA_FAKE_GH_BODY;$oldCount=$env:MONGA_FAKE_GH_COUNT
+    $oldPath=$env:PATH;$oldBody=$env:MONGA_FAKE_GH_BODY;$oldCount=$env:MONGA_FAKE_GH_COUNT;$oldPr=$env:MONGA_FAKE_CONTROL_PR
     $body=Join-Path $Fixture.Root 'fake-published-body.txt';$count=Join-Path $Fixture.Root 'fake-publish-count.txt'
     try {
-        $env:PATH="$(Install-FakeGh $Fixture.Root);$oldPath";$env:MONGA_FAKE_GH_BODY=$body;$env:MONGA_FAKE_GH_COUNT=$count
-        $arguments=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$Fixture.Reporter)
+        $env:PATH="$(Install-FakeGh $Fixture.Root);$oldPath";$env:MONGA_FAKE_GH_BODY=$body;$env:MONGA_FAKE_GH_COUNT=$count;$env:MONGA_FAKE_CONTROL_PR=[string]$controlPr
+        $arguments=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$Fixture.Reporter,'-ControlPrNumber',[string]$controlPr)
         if($Publish){$arguments+='-Publish'}else{$arguments+='-DryRun'}
         if(-not$AutoDiscover){$arguments+=@('-ResultFile',$(if($ResultFile){$ResultFile}else{$Fixture.Terminal}))}
         $saved=$ErrorActionPreference;$ErrorActionPreference='Continue'
         try{$output=& powershell.exe @arguments 2>&1;$code=$LASTEXITCODE}finally{$ErrorActionPreference=$saved}
         return [pscustomobject]@{ExitCode=$code;Output=@($output);CountFile=$count;BodyFile=$body}
-    } finally {$env:PATH=$oldPath;$env:MONGA_FAKE_GH_BODY=$oldBody;$env:MONGA_FAKE_GH_COUNT=$oldCount}
+    } finally {$env:PATH=$oldPath;$env:MONGA_FAKE_GH_BODY=$oldBody;$env:MONGA_FAKE_GH_COUNT=$oldCount;$env:MONGA_FAKE_CONTROL_PR=$oldPr}
 }
 
 try {
     $completed=New-ReporterRepository 'completed-valid' 'completed' 9200000001L
     $completedResult=Invoke-Reporter $completed -Publish
     if($completedResult.ExitCode-ne0-or@(Get-Content $completedResult.CountFile).Count-ne1-or-not(Test-Path (Join-Path $completed.Root '.tollgate-local/reported/9200000001.json'))){throw 'Valid normal completed publish fixture failed.'}
+    $reportedRecord=Get-Content (Join-Path $completed.Root '.tollgate-local/reported/9200000001.json') -Raw|ConvertFrom-Json
+    if([int]$reportedRecord.pr_number-ne$controlPr){throw 'Reported state did not preserve the parameterized control PR.'}
     $again=Invoke-Reporter $completed -Publish
     if($again.ExitCode-ne0-or@(Get-Content $completedResult.CountFile).Count-ne1-or(@($again.Output)-join"`n")-notmatch'TOLLGATE_RESULT_ALREADY_REPORTED'){throw 'Normal already-reported idempotency failed.'}
 
@@ -99,7 +103,7 @@ try {
     & cmd.exe /c "mklink /J `"$(Join-Path $reported.Root '.tollgate-local/reported')`" `"$outsideReported`"" *> $null
     if($LASTEXITCODE-eq0){$result=Invoke-Reporter $reported -Publish;if($result.ExitCode-eq0-or(Test-Path $result.CountFile)-or@(Get-ChildItem $outsideReported -Force).Count-ne0){throw 'Normal reporter accepted reported junction or performed an external action.'}}else{Write-Output 'SKIP: reported junction unavailable'}
 
-    Write-Output 'PASS: normal completed/failed discovery, explicit lifecycle paths, mock publish and already-reported idempotency.'
+    Write-Output 'PASS: parameterized normal completed/failed discovery, explicit lifecycle paths, mock publish and already-reported idempotency.'
     Write-Output 'PASS: completed/failed/reported junctions and external/lexical ResultFile paths fail closed before mock publish.'
 } finally {
     if(Test-Path $suite){Remove-Item -LiteralPath $suite -Recurse -Force}

@@ -7,6 +7,8 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Synthetic')][scriptblock]$ReporterStage,
     [Parameter(ParameterSetName = 'Production')][string]$CodexExecutable,
     [Parameter(ParameterSetName = 'Production')][string[]]$TrustedSearchRoots = @(),
+    [Parameter(ParameterSetName = 'Production')][ValidateRange(1,2147483647)][int]$ControlPrNumber = 23,
+    [Parameter(ParameterSetName = 'Production')][ValidateNotNullOrEmpty()][string]$ExpectedBranch = 'feat/model-candidate-evaluation',
     [Parameter(ParameterSetName = 'Production')][ValidateRange(30,1800)][int]$TimeoutSeconds = 300
 )
 
@@ -18,11 +20,15 @@ if ($PSCmdlet.ParameterSetName -eq 'Synthetic' -and -not $Synthetic) { throw 'Sy
 if (-not $Synthetic) {
     . (Join-Path $PSScriptRoot 'Orchestrator.BridgeStages.ps1')
     $StateRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) '.tollgate-local'
-    $PrepareStage = { param($root, $file) Invoke-TollgateBridgeProcess (New-TollgateBridgeStage -Stage Prepare) }
-    $ExecutorStage = { param($root, $file)
-        Invoke-TollgateBridgeProcess (New-TollgateBridgeStage -Stage Executor -InputFile $file -CodexExecutable $CodexExecutable -TrustedSearchRoots $TrustedSearchRoots -IsolationRoot (Join-Path $root 'orchestrator') -TimeoutSeconds $TimeoutSeconds)
+    $PrepareStage = { param($root, $file)
+        Invoke-TollgateBridgeProcess (New-TollgateBridgeStage -Stage Prepare -ControlPrNumber $ControlPrNumber -ExpectedBranch $ExpectedBranch)
     }
-    $ReporterStage = { param($root, $file) Invoke-TollgateBridgeProcess (New-TollgateBridgeStage -Stage Reporter -InputFile $file) }
+    $ExecutorStage = { param($root, $file)
+        Invoke-TollgateBridgeProcess (New-TollgateBridgeStage -Stage Executor -InputFile $file -CodexExecutable $CodexExecutable -TrustedSearchRoots $TrustedSearchRoots -IsolationRoot (Join-Path $root 'orchestrator') -ControlPrNumber $ControlPrNumber -ExpectedBranch $ExpectedBranch -TimeoutSeconds $TimeoutSeconds)
+    }
+    $ReporterStage = { param($root, $file)
+        Invoke-TollgateBridgeProcess (New-TollgateBridgeStage -Stage Reporter -InputFile $file -ControlPrNumber $ControlPrNumber -ExpectedBranch $ExpectedBranch)
+    }
 }
 $root = [IO.Path]::GetFullPath($StateRoot)
 $repositoryRoot = [IO.Path]::GetFullPath((Split-Path (Split-Path $PSScriptRoot -Parent) -Parent))

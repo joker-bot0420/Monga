@@ -1,13 +1,15 @@
 ﻿[CmdletBinding()]
 param(
-    [switch]$StageResult
+    [switch]$StageResult,
+    [ValidateRange(1, 2147483647)]
+    [int]$ControlPrNumber = 23
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repository = 'joker-bot0420/Monga'
-$issueNumber = 23
+$issueNumber = $ControlPrNumber
 $trustedUser = 'joker-bot0420'
 $triggerMarker = '[TOLLGATE_APPROVED]'
 $expectedIssueUrl = "https://api.github.com/repos/$repository/issues/$issueNumber"
