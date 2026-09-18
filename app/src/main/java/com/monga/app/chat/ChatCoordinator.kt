@@ -102,6 +102,8 @@ class ChatCoordinator(
         )
 
         val response = StringBuilder()
+        val sanitizeGroundedPrefix = episodicMemory.isNotBlank()
+        var lastVisibleResponse = ""
         var result: ChatResult? = null
 
         try {
@@ -113,14 +115,41 @@ class ChatCoordinator(
                 when (event) {
                     is InferenceEvent.Token -> {
                         response.append(event.text)
-                        onToken(response.toString())
+                        val visibleResponse =
+                            if (sanitizeGroundedPrefix) {
+                                GroundedResponsePrefixSanitizer.sanitizeStreaming(
+                                    response.toString()
+                                )
+                            } else {
+                                response.toString()
+                            }
+
+                        if (visibleResponse != lastVisibleResponse) {
+                            lastVisibleResponse = visibleResponse
+                            onToken(visibleResponse)
+                        }
                     }
 
                     InferenceEvent.Completed -> {
+                        val rawResponse = response.toString()
+                        val finalResponse =
+                            if (sanitizeGroundedPrefix) {
+                                GroundedResponsePrefixSanitizer
+                                    .sanitizeFinal(rawResponse)
+                                    .ifBlank { rawResponse }
+                            } else {
+                                rawResponse
+                            }
+
+                        if (finalResponse != lastVisibleResponse) {
+                            lastVisibleResponse = finalResponse
+                            onToken(finalResponse)
+                        }
+
                         chatStore.saveMessage(
                             conversationId = conversationId,
                             role = MessageRole.ASSISTANT,
-                            content = response.toString(),
+                            content = finalResponse,
                         )
 
                         result = ChatResult.Completed
