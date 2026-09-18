@@ -68,6 +68,7 @@ class EpisodicMemoryIntegrationTest {
             }.content
             assertTrue(system.contains("[현재 질문의 사실 근거]"))
             assertTrue(system.contains("전갱이와 가자미류"))
+            assertTrue(system.contains("질문이 언제, 며칠, 날짜를 묻고 기록에 날짜가 있으면 그 날짜를 직접 답하라. 날짜를 알고도 질문을 되묻지 마라."))
             assertTrue(system.contains("응/아니는 질문 전체의 참·거짓을 기록으로 확실히 판단할 수 있을 때만 사용하라."))
             assertTrue(system.contains("긍정 질문이 기록으로 확인되면 응이라고 답하고 사실을 말하라."))
             assertTrue(system.contains("부정 질문이 기록과 충돌하면 아니라고 답하고 기록된 사실을 말하라."))
