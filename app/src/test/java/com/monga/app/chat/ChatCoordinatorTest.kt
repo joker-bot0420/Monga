@@ -101,6 +101,44 @@ class ChatCoordinatorTest {
         assertEquals(MessageRole.USER, store.savedMessages.single().role)
     }
 
+    @Test
+    fun episodicGroundingStripsStandalonePrefixFromStreamingAndPersistence() = runBlocking {
+        val store = FakeChatStore()
+        val engine = StubInferenceEngine(
+            InferenceEvent.Token("아"),
+            InferenceEvent.Token("니."),
+            InferenceEvent.Token(" 9월 10일에 계단을 15분 걸은 기록이 있어."),
+            InferenceEvent.Completed,
+        )
+        val coordinator = ChatCoordinator(
+            chatStore = store,
+            inferenceEngine = engine,
+            systemPromptProvider = systemPromptProvider,
+            episodicMemoryProvider = EpisodicMemoryProvider {
+                "- 2026-09-10 | 운동: 계단을 15분 걸었다."
+            },
+        )
+        val drafts = mutableListOf<String>()
+
+        val result = coordinator.send(
+            conversationId = 1L,
+            content = "10일에는 운동 안 했지?",
+        ) { draft ->
+            drafts += draft
+        }
+
+        assertEquals(ChatResult.Completed, result)
+        assertEquals(
+            listOf("9월 10일에 계단을 15분 걸은 기록이 있어."),
+            drafts,
+        )
+        assertEquals(2, store.savedMessages.size)
+        assertEquals(
+            "9월 10일에 계단을 15분 걸은 기록이 있어.",
+            store.savedMessages.last().content,
+        )
+    }
+
     private class FakeChatStore : ChatStore {
         val savedMessages = mutableListOf<Message>()
 
