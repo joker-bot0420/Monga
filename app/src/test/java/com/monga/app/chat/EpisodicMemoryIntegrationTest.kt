@@ -63,13 +63,19 @@ class EpisodicMemoryIntegrationTest {
                 }
             )
 
+            val system = engine.receivedMessages.first {
+                it.role == InferenceRole.SYSTEM
+            }.content
+            assertTrue(system.contains("[현재 질문의 사실 근거]"))
+            assertTrue(system.contains("전갱이와 가자미류"))
+            assertTrue(system.contains("기록에 적힌 사건이 있으면 그 사건이 없었다고 말하지 마라."))
+
             val latestUser = engine.receivedMessages.last {
                 it.role == InferenceRole.USER
             }.content
-            assertTrue(latestUser.contains("[과거 사건 기억]"))
-            assertTrue(latestUser.contains("전갱이와 가자미류"))
-            assertTrue(latestUser.contains("[현재 질문]"))
-            assertTrue(latestUser.endsWith("지난번 회사에서 어떤 어종 봤었지?"))
+            assertEquals("지난번 회사에서 어떤 어종 봤었지?", latestUser)
+            assertFalse(latestUser.contains("[과거 사건 기억]"))
+            assertFalse(latestUser.contains("[현재 질문]"))
             assertFalse(latestUser.contains("[사용자 기억]"))
 
             val persistedCurrentUser = store.savedMessages.last {
@@ -80,6 +86,7 @@ class EpisodicMemoryIntegrationTest {
                 persistedCurrentUser.content,
             )
             assertFalse(persistedCurrentUser.content.contains("[과거 사건 기억]"))
+            assertFalse(persistedCurrentUser.content.contains("[현재 질문의 사실 근거]"))
         }
 
     private class RecordingChatStore : ChatStore {
