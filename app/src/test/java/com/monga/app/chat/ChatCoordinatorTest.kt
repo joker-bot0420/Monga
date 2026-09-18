@@ -102,6 +102,32 @@ class ChatCoordinatorTest {
     }
 
     @Test
+    fun noEpisodicGroundingPreservesStandalonePrefix() = runBlocking {
+        val store = FakeChatStore()
+        val engine = StubInferenceEngine(
+            InferenceEvent.Token("응. 좋아."),
+            InferenceEvent.Completed,
+        )
+        val coordinator = ChatCoordinator(
+            chatStore = store,
+            inferenceEngine = engine,
+            systemPromptProvider = systemPromptProvider,
+        )
+        val drafts = mutableListOf<String>()
+
+        val result = coordinator.send(
+            conversationId = 1L,
+            content = "좋아?",
+        ) { draft ->
+            drafts += draft
+        }
+
+        assertEquals(ChatResult.Completed, result)
+        assertEquals(listOf("응. 좋아."), drafts)
+        assertEquals("응. 좋아.", store.savedMessages.last().content)
+    }
+
+    @Test
     fun episodicGroundingStripsStandalonePrefixFromStreamingAndPersistence() = runBlocking {
         val store = FakeChatStore()
         val engine = StubInferenceEngine(
