@@ -45,6 +45,21 @@ def main():
         },
     )
 
+    def to_prompt_completion(example):
+        messages = example["messages"]
+        if len(messages) < 2 or messages[-1].get("role") != "assistant":
+            raise ValueError("Each training example must end with one assistant message.")
+        return {
+            "prompt": messages[:-1],
+            "completion": [messages[-1]],
+        }
+
+    for split in dataset:
+        dataset[split] = dataset[split].map(
+            to_prompt_completion,
+            remove_columns=dataset[split].column_names,
+        )
+
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model,
         max_seq_length=args.max_seq_length,
@@ -94,7 +109,8 @@ def main():
         report_to="none",
         bf16=is_bfloat16_supported(),
         fp16=not is_bfloat16_supported(),
-        assistant_only_loss=True,
+        completion_only_loss=True,
+        assistant_only_loss=False,
         eos_token=tokenizer.eos_token,
         pad_token=tokenizer.pad_token,
         packing=False,
