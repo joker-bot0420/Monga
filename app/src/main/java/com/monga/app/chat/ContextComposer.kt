@@ -18,16 +18,19 @@ internal object ContextComposer {
                 recentMessages
             }
 
-        val contextualMessages = attachMemoryToLatestUserMessage(
+        val contextualMessages = attachCoreMemoryToLatestUserMessage(
             messages = focusedMessages,
             coreMemory = coreMemory,
+        )
+        val groundedSystemPrompt = attachEpisodicMemoryToSystemPrompt(
+            systemPrompt = systemPrompt,
             episodicMemory = episodicMemory,
         )
 
         return listOf(
             InferenceMessage(
                 role = InferenceRole.SYSTEM,
-                content = systemPrompt,
+                content = groundedSystemPrompt,
             )
         ) + contextualMessages
     }
@@ -58,12 +61,11 @@ internal object ContextComposer {
         }
     }
 
-    private fun attachMemoryToLatestUserMessage(
+    private fun attachCoreMemoryToLatestUserMessage(
         messages: List<InferenceMessage>,
         coreMemory: String,
-        episodicMemory: String,
     ): List<InferenceMessage> {
-        if (coreMemory.isBlank() && episodicMemory.isBlank()) {
+        if (coreMemory.isBlank()) {
             return messages
         }
 
@@ -77,21 +79,9 @@ internal object ContextComposer {
 
         val userMessage = messages[lastUserIndex]
         val contextualContent = buildString {
-            if (coreMemory.isNotBlank()) {
-                appendLine("[사용자 기억]")
-                appendLine("다음은 현재 질문에 답할 때 참고할 user 본인의 정보다.")
-                appendLine(coreMemory)
-            }
-
-            if (episodicMemory.isNotBlank()) {
-                if (isNotEmpty()) {
-                    appendLine()
-                }
-                appendLine("[과거 사건 기억]")
-                appendLine("다음은 user의 과거 사건 기록이다.")
-                appendLine(episodicMemory)
-            }
-
+            appendLine("[사용자 기억]")
+            appendLine("다음은 현재 질문에 답할 때 참고할 user 본인의 정보다.")
+            appendLine(coreMemory)
             appendLine()
             appendLine("[현재 질문]")
             append(userMessage.content)
@@ -101,6 +91,30 @@ internal object ContextComposer {
             contextualized[lastUserIndex] = userMessage.copy(
                 content = contextualContent,
             )
+        }
+    }
+
+    private fun attachEpisodicMemoryToSystemPrompt(
+        systemPrompt: String,
+        episodicMemory: String,
+    ): String {
+        if (episodicMemory.isBlank()) {
+            return systemPrompt
+        }
+
+        return buildString {
+            append(systemPrompt)
+            if (isNotEmpty() && last() != '\n') {
+                appendLine()
+            }
+            appendLine()
+            appendLine("[현재 질문의 사실 근거]")
+            appendLine("다음은 앱이 현재 질문과 관련 있다고 선택한 user의 저장된 과거 사건 기록이다.")
+            appendLine("질문의 표현과 기록의 표현이 달라도, 기록의 사실이 질문에 답이 되면 그 사실을 사용하라.")
+            appendLine("질문의 날짜, 최근, 지난번 같은 시간 조건은 기록 선택에 이미 반영되어 있다.")
+            appendLine("기록에 적힌 사건이 있으면 그 사건이 없었다고 말하지 마라.")
+            appendLine("기록으로 확인되지 않는 감정, 상태, 원인, 평가, 세부사항은 만들지 마라.")
+            append(episodicMemory)
         }
     }
 }
